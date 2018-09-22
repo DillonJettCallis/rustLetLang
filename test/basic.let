@@ -1,0 +1,8 @@
+
+
+
+export fun main(): Float = {
+    let x = 5 + 2;
+}
+
+
