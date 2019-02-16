@@ -5,3 +5,4 @@ authors = ["dillon <LordBlackHole@gmail.com>"]
 
 [dependencies]
 simple-error="0.1.11"
+bytebuffer = "0.2.1"
