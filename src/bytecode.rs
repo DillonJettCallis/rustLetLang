@@ -52,11 +52,11 @@ pub enum Instruction {
     shape_id: ConstantId
   },
   Return,
-  IfEqual,
-  IfNotEqual,
-  IfTrue,
-  IfFalse,
-  Jump,
+  IfEqual{jump: i32},
+  IfNotEqual{jump: i32},
+  IfTrue{jump: i32},
+  IfFalse{jump: i32},
+  Jump{jump: i32},
   Debug,
   Error
 }

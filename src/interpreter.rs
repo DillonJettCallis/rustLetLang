@@ -8,11 +8,20 @@ use shapes::*;
 
 use simple_error::SimpleError;
 use runtime::Value;
+use std::fmt::Debug;
+use std::fmt::Formatter;
+use std::fmt::Error;
 
 pub trait RunFunction {
 
-  fn execute(&self, machine: &Machine, args: &Vec<Value>) -> Result<Value, SimpleError>;
+  fn execute(&self, machine: &Machine, args: Vec<Value>) -> Result<Value, SimpleError>;
 
+}
+
+impl Debug for RunFunction {
+  fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
+    f.write_str("<function>")
+  }
 }
 
 pub struct Machine {
@@ -25,13 +34,14 @@ impl Machine {
   pub fn new(app: AppDirectory) -> Machine {
     let mut core_functions: Vec<Box<RunFunction>> = Vec::new();
     core_functions.push(Box::new(sum_impl()));
+    core_functions.push(Box::new(mul_impl()));
     Machine{app, core_functions}
   }
 
-  pub fn execute(&self, func: &BitFunction, args: &Vec<Value>) -> Result<Value, SimpleError> {
+  pub fn execute(&self, func: &BitFunction, mut locals: Vec<Value>) -> Result<Value, SimpleError> {
     let mut index = 0usize;
     let mut stack: Vec<Value> = Vec::new();
-    let mut locals: Vec<Value> = Vec::with_capacity(func.max_locals as usize);
+    locals.resize(func.max_locals as usize, Value::Null);
 
     while index < func.body.len() {
       match func.body[index] {
@@ -104,7 +114,9 @@ impl Machine {
               params.push(param);
             }
 
-            let result = func.execute(&self, &params)?;
+            params.reverse();
+
+            let result = func.execute(&self, params)?;
             stack.push(result);
           } else {
             return Err(SimpleError::new("Invalid bytecode. CallBuiltIn is not function"))
@@ -128,7 +140,9 @@ impl Machine {
               params.push(param);
             }
 
-            let result = func.execute(&self, &params)?;
+            params.reverse();
+
+            let result = func.execute(&self, params)?;
             stack.push(result);
           } else {
             return Err(SimpleError::new("Invalid bytecode. CallStatic is not function"))
@@ -149,11 +163,13 @@ impl Machine {
               params.push(param);
             }
 
+            params.reverse();
+
             let maybe_func: Value = stack.pop()
               .ok_or_else(|| SimpleError::new("Invalid bytecode. Invalid built in function id"))?;
 
             if let Value::Function(func) = maybe_func {
-              let result = func.execute(&self, &params)?;
+              let result = func.execute(&self, params)?;
               stack.push(result);
             } else {
               return Err(SimpleError::new("Invalid bytecode. CallDynamic is not function"))
@@ -165,6 +181,30 @@ impl Machine {
         Instruction::Return => {
           return stack.pop()
             .ok_or_else(|| SimpleError::new("Invalid bytecode. Attempt to return empty stack"));
+        },
+        Instruction::IfEqual{jump} => {
+          let first = stack.pop()
+            .ok_or_else(|| SimpleError::new("Invalid bytecode. Attempt to IfEqual empty stack"))?;
+
+          let second = stack.pop()
+            .ok_or_else(|| SimpleError::new("Invalid bytecode. Attempt to IfEqual stack of 1 item"))?;
+
+          match (first, second) {
+            (Value::Float(first_value), Value::Float(second_value)) => {
+              if first_value == second_value {
+                index = Machine::calculate_jump(index, jump);
+              }
+            }
+            _ => {
+              // Do nothing
+            }
+          }
+        },
+        Instruction::Jump{jump} => {
+          index = Machine::calculate_jump(index, jump);
+        }
+        Instruction::Debug => {
+          println!("Debug: \n  Stack: {:#?}\n  Locals: {:#?}", &stack, &locals)
         }
 
         _ => unimplemented!()
@@ -176,11 +216,19 @@ impl Machine {
     Err(SimpleError::new(format!("Overflowed function body")))
   }
 
+  fn calculate_jump(index: usize, jump: i32) -> usize {
+    if jump >= 0 {
+      return index + (jump as usize) - 1;
+    } else {
+      let rel = (0 - jump) as usize;
+      return index - rel - 1;
+    }
+  }
 }
 
 impl RunFunction for BitFunction {
 
-  fn execute(&self, machine: &Machine, args: &Vec<Value>) -> Result<Value, SimpleError> {
+  fn execute(&self, machine: &Machine, args: Vec<Value>) -> Result<Value, SimpleError> {
     machine.execute(self, args)
   }
 
@@ -190,7 +238,7 @@ fn sum_impl() -> impl RunFunction {
   struct SumFun{}
 
   impl RunFunction for SumFun {
-    fn execute(&self, machine: &Machine, args: &Vec<Value>) -> Result<Value, SimpleError> {
+    fn execute(&self, machine: &Machine, args: Vec<Value>) -> Result<Value, SimpleError> {
       if args.len() == 2 {
         if let Value::Float(first) = args[0] {
           if let Value::Float(second) = args[1] {
@@ -206,3 +254,22 @@ fn sum_impl() -> impl RunFunction {
   return SumFun{}
 }
 
+fn mul_impl() -> impl RunFunction {
+  struct MulFun{}
+
+  impl RunFunction for MulFun {
+    fn execute(&self, machine: &Machine, args: Vec<Value>) -> Result<Value, SimpleError> {
+      if args.len() == 2 {
+        if let Value::Float(first) = args[0] {
+          if let Value::Float(second) = args[1] {
+            return Ok(Value::Float(first * second));
+          }
+        }
+      }
+
+      return Err(SimpleError::new("Core.* takes exactly two float arguments"));
+    }
+  }
+
+  return MulFun{}
+}

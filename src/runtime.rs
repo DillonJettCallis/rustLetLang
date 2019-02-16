@@ -4,8 +4,9 @@ use interpreter::RunFunction;
 use shapes::BaseShapeKind;
 use shapes::Shape;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Value {
+  Null,
   String(Rc<String>),
   Float(f64),
   Function(Rc<RunFunction>),
