@@ -4,21 +4,28 @@ use simple_error::SimpleError;
 
 use shapes::BaseShapeKind;
 use shapes::Shape;
+use std::collections::HashMap;
+use interpreter::RunFunction;
 
 pub type LocalId = u16;
 pub type ConstantId = u32;
 
 pub struct AppDirectory {
-  pub core_functions: Vec<String>,
   pub string_constants: Vec<String>,
-  pub function_refs: Vec<BitFunction>,
+  pub function_refs: Vec<FunctionRef>,
+  pub functions: HashMap<String, Box<RunFunction>>,
   pub shape_refs: Vec<Shape>,
   pub source: String,
 }
 
+pub struct FunctionRef {
+  pub name: String,
+  pub shape: Shape,
+}
+
 pub struct BitFunction {
   pub max_locals: LocalId,
-  pub function_shape: Shape,
+  pub shape: Shape,
   pub body: Vec<Instruction>,
   pub source: Vec<SourcePoint>,
 }
@@ -41,13 +48,8 @@ pub enum Instruction {
   StoreValue {
     local: LocalId
   },
-  CallBuiltIn {
-    func_id: ConstantId,
-    shape_id: ConstantId,
-  },
   CallStatic {
     func_id: ConstantId,
-    shape_id: ConstantId,
   },
   CallDynamic {
     shape_id: ConstantId

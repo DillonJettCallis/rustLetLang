@@ -11,10 +11,13 @@ use runtime::Value;
 use std::fmt::Debug;
 use std::fmt::Formatter;
 use std::fmt::Error;
+use shapes::Shape::SimpleFunctionShape;
 
 pub trait RunFunction {
 
   fn execute(&self, machine: &Machine, args: Vec<Value>) -> Result<Value, SimpleError>;
+
+  fn get_shape(&self) -> &Shape;
 
 }
 
@@ -96,41 +99,15 @@ impl Machine {
 
           locals[index] = value;
         },
-        Instruction::CallBuiltIn{func_id, shape_id} => {
-          let func_name: &String = self.app.core_functions.get(func_id as usize)
-            .ok_or_else(|| SimpleError::new("Invalid bytecode. Invalid built in function id"))?;
+        Instruction::CallStatic{func_id} => {
+          let func_ref: &FunctionRef = self.app.function_refs.get(func_id as usize)
+            .ok_or_else(|| SimpleError::new("Invalid bytecode. Invalid function id"))?;
 
-          let func: &Box<RunFunction> = self.core_functions.get(func_name)
-            .ok_or_else(|| SimpleError::new("Invalid bytecode. Invalid built in function name"))?;
+          let func = self.core_functions.get(&func_ref.name)
+            .or_else(||self.app.functions.get(&func_ref.name))
+            .ok_or_else(|| SimpleError::new("Invalid bytecode. Function with name not found"))?;
 
-          let shape: &Shape = self.app.shape_refs.get(shape_id as usize)
-            .ok_or_else(|| SimpleError::new("Invalid bytecode. Invalid Shape constant"))?;
-
-          if let Shape::SimpleFunctionShape{args, result: _} = shape {
-            let size = args.len();
-            let mut params: Vec<Value> = Vec::with_capacity(size);
-
-            for i in 0..size {
-              let param = stack.pop()
-                .ok_or_else(|| SimpleError::new("Invalid bytecode. Not enough args for function"))?;
-
-              params.push(param);
-            }
-
-            params.reverse();
-
-            let result = func.execute(&self, params)?;
-            stack.push(result);
-          } else {
-            return Err(SimpleError::new("Invalid bytecode. CallBuiltIn is not function"))
-          }
-        },
-        Instruction::CallStatic{func_id, shape_id} => {
-          let func: &BitFunction = self.app.function_refs.get(func_id as usize)
-            .ok_or_else(|| SimpleError::new("Invalid bytecode. Invalid built in function id"))?;
-
-          let shape: &Shape = self.app.shape_refs.get(shape_id as usize)
-            .ok_or_else(|| SimpleError::new("Invalid bytecode. Invalid Shape constant"))?;
+          let shape = func.get_shape();
 
           if let Shape::SimpleFunctionShape { args, result: _ } = shape {
             let size = args.len();
@@ -172,8 +149,12 @@ impl Machine {
               .ok_or_else(|| SimpleError::new("Invalid bytecode. Invalid built in function id"))?;
 
             if let Value::Function(func) = maybe_func {
-              let result = func.execute(&self, params)?;
-              stack.push(result);
+              if func.get_shape() == shape {
+                let result = func.execute(&self, params)?;
+                stack.push(result);
+              } else {
+                return Err(SimpleError::new("Invalid bytecode. CallDynamic function shape different than provided shape"))
+              }
             } else {
               return Err(SimpleError::new("Invalid bytecode. CallDynamic is not function"))
             }
@@ -235,10 +216,15 @@ impl RunFunction for BitFunction {
     machine.execute(self, args)
   }
 
+  fn get_shape(&self) -> &Shape {
+    &self.shape
+  }
 }
 
 fn sum_impl() -> impl RunFunction {
-  struct SumFun{}
+  struct SumFun {
+    shape: Shape
+  }
 
   impl RunFunction for SumFun {
     fn execute(&self, machine: &Machine, args: Vec<Value>) -> Result<Value, SimpleError> {
@@ -252,13 +238,24 @@ fn sum_impl() -> impl RunFunction {
 
       return Err(SimpleError::new("Core.+ takes exactly two float arguments"));
     }
+
+    fn get_shape(&self) -> &Shape {
+      &self.shape
+    }
   }
 
-  return SumFun{}
+  return SumFun{
+    shape: Shape::SimpleFunctionShape {
+      args: vec![Shape::BaseShape {kind: BaseShapeKind::Float}, Shape::BaseShape {kind: BaseShapeKind::Float}],
+      result: Box::new(Shape::BaseShape {kind: BaseShapeKind::Float})
+    }
+  }
 }
 
 fn mul_impl() -> impl RunFunction {
-  struct MulFun{}
+  struct MulFun{
+    shape: Shape
+  }
 
   impl RunFunction for MulFun {
     fn execute(&self, machine: &Machine, args: Vec<Value>) -> Result<Value, SimpleError> {
@@ -272,7 +269,16 @@ fn mul_impl() -> impl RunFunction {
 
       return Err(SimpleError::new("Core.* takes exactly two float arguments"));
     }
+
+    fn get_shape(&self) -> &Shape {
+      &self.shape
+    }
   }
 
-  return MulFun{}
+  return MulFun{
+    shape: Shape::SimpleFunctionShape {
+      args: vec![Shape::BaseShape {kind: BaseShapeKind::Float}, Shape::BaseShape {kind: BaseShapeKind::Float}],
+      result: Box::new(Shape::BaseShape {kind: BaseShapeKind::Float})
+    }
+  }
 }

@@ -18,6 +18,9 @@ use shapes::BaseShapeKind;
 use bytecode::AppDirectory;
 use interpreter::Machine;
 use bytecode::BitFunction;
+use std::collections::HashMap;
+use bytecode::FunctionRef;
+use interpreter::RunFunction;
 
 fn main() {
   match execute_test() {
@@ -35,17 +38,23 @@ fn parse_test() -> Result<Module, SimpleError> {
 fn execute_test() -> Result<Value, SimpleError> {
   let main = build_main();
 
-  let mut shape_refs: Vec<Shape> = Vec::new();
-  shape_refs.push(Shape::SimpleFunctionShape {
+  let op_shape = Shape::SimpleFunctionShape {
     args: vec![Shape::BaseShape {kind: BaseShapeKind::Float}, Shape::BaseShape {kind: BaseShapeKind::Float}],
     result: Box::new(Shape::BaseShape {kind: BaseShapeKind::Float})
-  });
+  };
+
+  let mut functions: HashMap<String, Box<RunFunction>> = HashMap::new();
+  functions.insert(String::from("Basic.pow"), Box::new(build_pow()));
 
   let app = AppDirectory {
-    core_functions: vec![String::from("Core.+"), String::from("Core.*")],
     string_constants: vec![],
-    function_refs: vec![build_pow()],
-    shape_refs,
+    function_refs: vec![
+      FunctionRef{name: String::from("Core.+"), shape:  op_shape.clone()},
+      FunctionRef{name: String::from("Core.*"), shape:  op_shape.clone()},
+      FunctionRef{name: String::from("Basic.pow"), shape:  op_shape.clone()}
+    ],
+    functions,
+    shape_refs: vec![op_shape.clone()],
     source: String::new()
   };
 
@@ -70,11 +79,11 @@ fn build_pow() -> BitFunction {
 
   //   i = i * base;
   body.push(Instruction::LoadValue {local: 0}); // load base to stack
-  body.push(Instruction::CallBuiltIn {func_id: 1, shape_id: 0}); // call Core.*
+  body.push(Instruction::CallStatic {func_id: 1}); // call Core.*
   //   power = power - 1;
   body.push(Instruction::LoadValue {local: 1}); // load counter to stack
   body.push(Instruction::LoadConstFloat {value: -1.0}); // load negative one to subtract
-  body.push(Instruction::CallBuiltIn {func_id: 0, shape_id: 0}); // call Core.+ with -1 to subtract one
+  body.push(Instruction::CallStatic {func_id: 0}); // call Core.+ with -1 to subtract one
   body.push(Instruction::StoreValue {local: 1}); // counter has been decremented, store it back in local
   body.push(Instruction::Jump {jump: -9}); // jump back up to the loop
   // }
@@ -84,7 +93,7 @@ fn build_pow() -> BitFunction {
 
   return BitFunction {
     max_locals: 2,
-    function_shape: Shape::SimpleFunctionShape {
+    shape: Shape::SimpleFunctionShape {
       args: vec![float_shape.clone(), float_shape.clone()],
       result: Box::new(float_shape)
     },
@@ -98,12 +107,12 @@ fn build_main() -> BitFunction {
 
   body.push(Instruction::LoadConstFloat {value: 5.0});
   body.push(Instruction::LoadConstFloat {value: 3.0});
-  body.push(Instruction::CallStatic {func_id: 0, shape_id: 0});
+  body.push(Instruction::CallStatic {func_id: 2});
   body.push(Instruction::Return);
 
   return BitFunction {
     max_locals: 0,
-    function_shape: Shape::SimpleFunctionShape {
+    shape: Shape::SimpleFunctionShape {
       args: vec![],
       result: Box::new(Shape::BaseShape {kind: BaseShapeKind::Float})
     },
