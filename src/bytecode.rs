@@ -9,6 +9,7 @@ pub type LocalId = u16;
 pub type ConstantId = u32;
 
 pub struct AppDirectory {
+  pub core_functions: Vec<String>,
   pub string_constants: Vec<String>,
   pub function_refs: Vec<BitFunction>,
   pub shape_refs: Vec<Shape>,

@@ -26,15 +26,15 @@ impl Debug for RunFunction {
 
 pub struct Machine {
   app: AppDirectory,
-  core_functions: Vec<Box<RunFunction>>,
+  core_functions: HashMap<String, Box<RunFunction>>,
 }
 
 impl Machine {
 
   pub fn new(app: AppDirectory) -> Machine {
-    let mut core_functions: Vec<Box<RunFunction>> = Vec::new();
-    core_functions.push(Box::new(sum_impl()));
-    core_functions.push(Box::new(mul_impl()));
+    let mut core_functions: HashMap<String, Box<RunFunction>> = HashMap::new();
+    core_functions.insert(String::from("Core.+"), Box::new(sum_impl()));
+    core_functions.insert(String::from("Core.*"), Box::new(mul_impl()));
     Machine{app, core_functions}
   }
 
@@ -97,8 +97,11 @@ impl Machine {
           locals[index] = value;
         },
         Instruction::CallBuiltIn{func_id, shape_id} => {
-          let func: &Box<RunFunction> = self.core_functions.get(func_id as usize)
+          let func_name: &String = self.app.core_functions.get(func_id as usize)
             .ok_or_else(|| SimpleError::new("Invalid bytecode. Invalid built in function id"))?;
+
+          let func: &Box<RunFunction> = self.core_functions.get(func_name)
+            .ok_or_else(|| SimpleError::new("Invalid bytecode. Invalid built in function name"))?;
 
           let shape: &Shape = self.app.shape_refs.get(shape_id as usize)
             .ok_or_else(|| SimpleError::new("Invalid bytecode. Invalid Shape constant"))?;

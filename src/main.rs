@@ -42,6 +42,7 @@ fn execute_test() -> Result<Value, SimpleError> {
   });
 
   let app = AppDirectory {
+    core_functions: vec![String::from("Core.+"), String::from("Core.*")],
     string_constants: vec![],
     function_refs: vec![build_pow()],
     shape_refs,
