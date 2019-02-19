@@ -184,7 +184,7 @@ impl Lexer {
         Expression::StringLiteral { shape, loc, value }
       }
       Token { kind: TokenKind::Number, .. } => {
-        let value = term.value;
+        let value = term.value.parse().or_else(|_| Err(SimpleError::new("Invalid float literal")))?;
         let shape = shape_float();
         Expression::NumberLiteral { shape, loc, value }
       }

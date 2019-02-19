@@ -8,6 +8,7 @@ mod typechecker;
 mod bytecode;
 mod interpreter;
 mod runtime;
+mod compiler;
 
 use ast::Module;
 use simple_error::SimpleError;
@@ -21,13 +22,23 @@ use bytecode::BitFunction;
 use std::collections::HashMap;
 use bytecode::FunctionRef;
 use interpreter::RunFunction;
+use compiler::Compiler;
 
 fn main() {
-  match execute_test() {
+  match compile_test() {
     Ok(Value::Float(result)) => println!("Success: \n{:#?}", result),
     Ok(_) => println!("Failure: "),
     Err(simple_error) => println!("Error: {}", simple_error.as_str())
   }
+}
+
+fn compile_test() -> Result<Value, SimpleError> {
+  let parsed = parser::parse("/home/dillon/projects/rustLetLang/test/basic.let")?;
+  let checked = typechecker::check_module(parsed)?;
+  let compiled = Compiler::compile(checked)?;
+  let machine = Machine::new(compiled);
+
+  machine.run_main()
 }
 
 fn parse_test() -> Result<Module, SimpleError> {
@@ -54,8 +65,7 @@ fn execute_test() -> Result<Value, SimpleError> {
       FunctionRef{name: String::from("Basic.pow"), shape:  op_shape.clone()}
     ],
     functions,
-    shape_refs: vec![op_shape.clone()],
-    source: String::new()
+    shape_refs: vec![op_shape.clone()]
   };
 
   let machine = Machine::new(app);

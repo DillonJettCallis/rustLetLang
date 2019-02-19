@@ -15,7 +15,6 @@ pub struct AppDirectory {
   pub function_refs: Vec<FunctionRef>,
   pub functions: HashMap<String, Box<RunFunction>>,
   pub shape_refs: Vec<Shape>,
-  pub source: String,
 }
 
 pub struct FunctionRef {
@@ -35,6 +34,7 @@ pub enum Instruction {
   Duplicate,
   Pop,
   Swap,
+  LoadConstNull,
   LoadConst {
     kind: u8,
     const_id: ConstantId

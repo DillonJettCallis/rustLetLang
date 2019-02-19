@@ -58,7 +58,7 @@ pub enum Expression {
   NumberLiteral {
     shape: Shape,
     loc: Location,
-    value: String,
+    value: f64,
   },
 }
 

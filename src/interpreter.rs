@@ -41,6 +41,13 @@ impl Machine {
     Machine{app, core_functions}
   }
 
+  pub fn run_main(&self) -> Result<Value, SimpleError> {
+    let main = self.app.functions.get("main")
+      .ok_or_else(|| SimpleError::new("No main function"))?;
+
+    main.execute(self, vec![])
+  }
+
   pub fn execute(&self, func: &BitFunction, mut locals: Vec<Value>) -> Result<Value, SimpleError> {
     let mut index = 0usize;
     let mut stack: Vec<Value> = Vec::new();
@@ -68,6 +75,9 @@ impl Machine {
 
           stack.push(first );
           stack.push(second);
+        },
+        Instruction::LoadConstNull => {
+          stack.push(Value::Null);
         },
         Instruction::LoadConst{kind, const_id} => {
           match kind {
