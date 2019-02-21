@@ -1,16 +1,15 @@
 use std::collections::HashMap;
+use std::fmt::Debug;
+use std::fmt::Error;
+use std::fmt::Formatter;
 use std::rc::Rc;
 
 use bytebuffer::ByteBuffer;
+use simple_error::SimpleError;
 
 use bytecode::*;
-use shapes::*;
-
-use simple_error::SimpleError;
 use runtime::Value;
-use std::fmt::Debug;
-use std::fmt::Formatter;
-use std::fmt::Error;
+use shapes::*;
 use shapes::Shape::SimpleFunctionShape;
 
 pub trait RunFunction {
@@ -36,8 +35,10 @@ impl Machine {
 
   pub fn new(app: AppDirectory) -> Machine {
     let mut core_functions: HashMap<String, Box<RunFunction>> = HashMap::new();
-    core_functions.insert(String::from("Core.+"), Box::new(sum_impl()));
-    core_functions.insert(String::from("Core.*"), Box::new(mul_impl()));
+    core_functions.insert(String::from("Core.+"), Box::new(float_op("Core.+", |l, r| l + r)));
+    core_functions.insert(String::from("Core.-"), Box::new(float_op("Core.-", |l, r| l - r)));
+    core_functions.insert(String::from("Core.*"), Box::new(float_op("Core.*", |l, r| l * r)));
+    core_functions.insert(String::from("Core./"), Box::new(float_op("Core./", |l, r| l / r)));
     Machine{app, core_functions}
   }
 
@@ -231,64 +232,40 @@ impl RunFunction for BitFunction {
   }
 }
 
-fn sum_impl() -> impl RunFunction {
-  struct SumFun {
-    shape: Shape
+struct NativeFunction<T> {
+  func: T,
+  shape: Shape,
+}
+
+impl<T: Fn(&Machine, Vec<Value>) -> Result<Value, SimpleError>> RunFunction for NativeFunction<T> {
+  fn execute(&self, machine: &Machine, args: Vec<Value>) -> Result<Value, SimpleError> {
+    (self.func)(machine, args)
   }
 
-  impl RunFunction for SumFun {
-    fn execute(&self, machine: &Machine, args: Vec<Value>) -> Result<Value, SimpleError> {
-      if args.len() == 2 {
-        if let Value::Float(first) = args[0] {
-          if let Value::Float(second) = args[1] {
-            return Ok(Value::Float(first + second));
-          }
-        }
-      }
-
-      return Err(SimpleError::new("Core.+ takes exactly two float arguments"));
-    }
-
-    fn get_shape(&self) -> &Shape {
-      &self.shape
-    }
-  }
-
-  return SumFun{
-    shape: Shape::SimpleFunctionShape {
-      args: vec![Shape::BaseShape {kind: BaseShapeKind::Float}, Shape::BaseShape {kind: BaseShapeKind::Float}],
-      result: Box::new(Shape::BaseShape {kind: BaseShapeKind::Float})
-    }
+  fn get_shape(&self) -> &Shape {
+    &self.shape
   }
 }
 
-fn mul_impl() -> impl RunFunction {
-  struct MulFun{
-    shape: Shape
-  }
-
-  impl RunFunction for MulFun {
-    fn execute(&self, machine: &Machine, args: Vec<Value>) -> Result<Value, SimpleError> {
-      if args.len() == 2 {
-        if let Value::Float(first) = args[0] {
-          if let Value::Float(second) = args[1] {
-            return Ok(Value::Float(first * second));
-          }
+fn float_op<Op: Fn(f64, f64) -> f64>(name: &'static str, op: Op) -> impl RunFunction {
+  let func = move |machine: &Machine, args: Vec<Value>| {
+    if args.len() == 2 {
+      if let Value::Float(first) = args[0] {
+        if let Value::Float(second) = args[1] {
+          let result = op(first, second);
+          return Ok(Value::Float(result));
         }
       }
-
-      return Err(SimpleError::new("Core.* takes exactly two float arguments"));
     }
 
-    fn get_shape(&self) -> &Shape {
-      &self.shape
-    }
-  }
+    return Err(SimpleError::new(format!("{} takes exactly two float arguments", name)));
+  };
 
-  return MulFun{
+  NativeFunction {
+    func,
     shape: Shape::SimpleFunctionShape {
-      args: vec![Shape::BaseShape {kind: BaseShapeKind::Float}, Shape::BaseShape {kind: BaseShapeKind::Float}],
-      result: Box::new(Shape::BaseShape {kind: BaseShapeKind::Float})
-    }
+      args: vec![shape_float(), shape_float()],
+      result: Box::new(shape_float()),
+    },
   }
 }

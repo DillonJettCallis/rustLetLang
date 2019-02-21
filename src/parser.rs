@@ -29,6 +29,9 @@ pub fn parse(src: &str) -> Result<Module, SimpleError> {
 }
 
 const SUM_OPS: &'static [&'static str] = &["+", "-"];
+const PROD_OPS: &'static [&'static str] = &["*", "/"];
+const EQUAL_OPS: &'static [&'static str] = &["==", "!="];
+const COMPARE_OPS: &'static [&'static str] = &["<", ">", "<=", ">="];
 
 struct Lexer {
   tokens: Vec<Token>,
@@ -103,7 +106,7 @@ impl Lexer {
   }
 
   fn parse_expression(&mut self) -> Result<Box<Expression>, SimpleError> {
-    self.parse_sum()
+    self.parse_ops()
   }
 
   fn parse_assignment(&mut self) -> Result<Box<Expression>, SimpleError> {
@@ -127,23 +130,33 @@ impl Lexer {
     Ok(Box::new(Expression::Assignment { shape, loc, id, body }))
   }
 
+  fn parse_ops(&mut self) -> Result<Box<Expression>, SimpleError> {
+    let start = |me: &mut Lexer| me.parse_block();
+    let prod = |me: &mut Lexer| me.parse_binary_op(PROD_OPS, start);
+    let sum = |me: &mut Lexer| me.parse_binary_op(SUM_OPS, prod);
+    let compare = |me: &mut Lexer| me.parse_binary_op(COMPARE_OPS, sum);
+    let equal = |me: &mut Lexer| me.parse_binary_op(EQUAL_OPS, compare);
 
-  fn parse_sum(&mut self) -> Result<Box<Expression>, SimpleError> {
-    let left = self.parse_block()?;
+    equal(self)
+  }
 
-    let maybe_op = self.peek();
+  fn parse_binary_op<Next: Fn(&mut Lexer) -> Result<Box<Expression>, SimpleError>>(&mut self, ops: &[&str], next: Next) -> Result<Box<Expression>, SimpleError> {
+    let mut left = next(self)?;
 
-    if SUM_OPS.contains(&maybe_op.value.as_ref()) {
+    let mut maybe_op = self.peek();
+
+    while ops.contains(&maybe_op.value.as_ref()) {
       self.skip();
       let op = maybe_op.value;
       let loc = maybe_op.location.clone();
       let shape = shape_unknown();
-      let right = self.parse_block()?;
+      let right = next(self)?;
 
-      Ok(Box::new(Expression::BinaryOp { shape, loc, left, right, op }))
-    } else {
-      Ok(left)
+      left = Box::new(Expression::BinaryOp { shape, loc, left, right, op });
+      maybe_op = self.peek();
     }
+
+    Ok(left)
   }
 
   fn parse_block(&mut self) -> Result<Box<Expression>, SimpleError> {

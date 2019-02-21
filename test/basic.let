@@ -2,7 +2,7 @@
 
 
 export fun main(): Float = {
-    let x = 5 + 2;
+    let x = 5 + {4 + 6} / 2 - 2 * 3;
     x
 }
 
