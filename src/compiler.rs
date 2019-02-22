@@ -1,20 +1,22 @@
 use std::cmp::max;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use simple_error::SimpleError;
 
 use ast::Expression;
+use ast::Module;
+use bytecode::AppDirectory;
 use bytecode::BitFunction;
 use bytecode::FunctionRef;
 use bytecode::Instruction;
-use shapes::Shape;
-use ast::Module;
-use std::rc::Rc;
-use bytecode::AppDirectory;
 use interpreter::RunFunction;
+use shapes::Shape;
+use bytecode::ConstantId;
 
 pub struct Compiler {
   function_refs: HashMap<String, (u32, Shape)>,
+  shape_refs: Vec<Shape>,
   string_constants: HashMap<String, u32>,
 }
 
@@ -22,6 +24,7 @@ impl Compiler {
   pub fn compile(module: Module) -> Result<AppDirectory, SimpleError> {
     let me = Compiler {
       function_refs: HashMap::new(),
+      shape_refs: Vec::new(),
       string_constants: HashMap::new(),
     };
 
@@ -44,20 +47,21 @@ impl Compiler {
       functions.insert(id, Box::new(bit_func));
     }
 
-    let Compiler{string_constants, function_refs} = self;
+    let Compiler{string_constants, shape_refs, function_refs} = self;
 
 
     Ok(AppDirectory{
       string_constants: Compiler::reorder_string_constants(&string_constants)?,
       function_refs: Compiler::reorder_function_refs(&function_refs)?,
       functions,
-      shape_refs: vec![]
+      shape_refs
     })
   }
 
   fn compile_function(&mut self, context: &mut FuncContext, ex: &Expression) -> Result<(String, BitFunction), SimpleError> {
     if let Expression::FunctionDeclaration { shape, loc, id, args, body } = ex {
       context.max_locals = 0u16;
+      context.locals.clear();
 
       let mut body = self.compile_expression(context, body)?;
 
@@ -88,7 +92,7 @@ impl Compiler {
       }
       Expression::Variable { shape, loc, id } => {
         let (local, _) = context.locals.get(id)
-          .ok_or_else(|| SimpleError::new("Failed to get variable from context"))?;
+          .ok_or_else(|| loc.error("Failed to get variable from context"))?;
 
         context.max_locals = max(local.clone(), context.max_locals);
 
@@ -107,7 +111,40 @@ impl Compiler {
 
         body.push(Instruction::CallStatic { func_id: func_id.clone() });
         return Ok(body);
-      }
+      },
+      Expression::Call {shape, loc, func, args} => {
+        let mut body = Vec::new();
+
+        if let Expression::Variable {ref id, ..} = **func {
+
+          for arg in args {
+            let mut more = self.compile_expression(context, arg)?;
+            body.append(&mut more);
+          }
+
+          let ref_size = self.function_refs.len() as u32;
+          let (func_id, _) = self.function_refs.entry(id.clone())
+            .or_insert_with(|| (ref_size, shape.clone()));
+
+          body.push(Instruction::CallStatic {func_id: func_id.clone()})
+        } else {
+          let mut function = self.compile_expression(context, func)?;
+
+          for arg in args {
+            let mut more = self.compile_expression(context, arg)?;
+            body.append(&mut more);
+          }
+          let shape_id = self.shape_refs.iter().position(|other| other == shape)
+            .or_else(move || {
+              self.shape_refs.push(shape.clone());
+              Some(self.shape_refs.len() - 1)
+            }).unwrap() as u32;
+
+          body.push(Instruction::CallDynamic { shape_id })
+        }
+
+        Ok(body)
+      },
       Expression::Block { shape, loc, body } => {
         let mut child_context = context.clone();
         let mut content: Vec<Instruction> = Vec::new();

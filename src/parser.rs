@@ -1,16 +1,18 @@
-use shapes::*;
-use ast::*;
-use simple_error::*;
 use std::fs::File;
 use std::io::BufRead;
 use std::io::BufReader;
 
-pub fn tokenize(src: &str) -> Result<Vec<Token>, SimpleError> {
-  let mut source = Tokenizer::new(src)?;
+use simple_error::*;
+
+use ast::*;
+use shapes::*;
+
+pub fn lex(src: &str) -> Result<Vec<Token>, SimpleError> {
+  let mut source = Lexer::new(src)?;
   let mut tokens: Vec<Token> = Vec::new();
 
   loop {
-    let next = source.parse();
+    let next = source.lex();
     let is_done = next.kind == TokenKind::EOF;
 
     tokens.push(next);
@@ -23,8 +25,8 @@ pub fn tokenize(src: &str) -> Result<Vec<Token>, SimpleError> {
 }
 
 pub fn parse(src: &str) -> Result<Module, SimpleError> {
-  let tokens = tokenize(src)?;
-  let mut parser = Lexer { tokens, index: 0 };
+  let tokens = lex(src)?;
+  let mut parser = Parser { tokens, index: 0 };
   parser.parse_module()
 }
 
@@ -33,12 +35,12 @@ const PROD_OPS: &'static [&'static str] = &["*", "/"];
 const EQUAL_OPS: &'static [&'static str] = &["==", "!="];
 const COMPARE_OPS: &'static [&'static str] = &["<", ">", "<=", ">="];
 
-struct Lexer {
+struct Parser {
   tokens: Vec<Token>,
   index: usize,
 }
 
-impl Lexer {
+impl Parser {
   fn parse_module(&mut self) -> Result<Module, SimpleError> {
     let mut exports: Vec<Export> = Vec::new();
     let mut locals: Vec<Box<Expression>> = Vec::new();
@@ -77,10 +79,22 @@ impl Lexer {
 
     self.expect_literal("(")?;
 
-    // TODO: Args
-    let args: Vec<String> = Vec::new();
+    let mut args = Vec::new();
+    let mut arg_types = Vec::new();
 
-    self.expect_literal(")")?;
+    if !self.check_literal(")") {
+      args.push(self.expect_kind(TokenKind::Id)?.value);
+      self.expect_literal(":")?;
+      arg_types.push(self.parse_type()?);
+
+      while self.check_literal(",") {
+        args.push(self.expect_kind(TokenKind::Id)?.value);
+        self.expect_literal(":")?;
+        arg_types.push(self.parse_type()?);
+      }
+
+      self.expect_literal(")")?;
+    }
 
     self.expect_literal(":")?;
 
@@ -90,7 +104,7 @@ impl Lexer {
 
     let body = self.parse_expression()?;
 
-    let shape = Shape::SimpleFunctionShape{ args: Vec::new(), result: Box::new(shape_named(result_type_name))};
+    let shape = Shape::SimpleFunctionShape{ args: arg_types, result: Box::new(shape_named(result_type_name))};
 
     Ok(Box::new(Expression::FunctionDeclaration { shape, loc, id, args, body }))
   }
@@ -131,16 +145,16 @@ impl Lexer {
   }
 
   fn parse_ops(&mut self) -> Result<Box<Expression>, SimpleError> {
-    let start = |me: &mut Lexer| me.parse_block();
-    let prod = |me: &mut Lexer| me.parse_binary_op(PROD_OPS, start);
-    let sum = |me: &mut Lexer| me.parse_binary_op(SUM_OPS, prod);
-    let compare = |me: &mut Lexer| me.parse_binary_op(COMPARE_OPS, sum);
-    let equal = |me: &mut Lexer| me.parse_binary_op(EQUAL_OPS, compare);
+    let start = |me: &mut Parser| me.parse_call();
+    let prod = |me: &mut Parser| me.parse_binary_op(PROD_OPS, start);
+    let sum = |me: &mut Parser| me.parse_binary_op(SUM_OPS, prod);
+    let compare = |me: &mut Parser| me.parse_binary_op(COMPARE_OPS, sum);
+    let equal = |me: &mut Parser| me.parse_binary_op(EQUAL_OPS, compare);
 
     equal(self)
   }
 
-  fn parse_binary_op<Next: Fn(&mut Lexer) -> Result<Box<Expression>, SimpleError>>(&mut self, ops: &[&str], next: Next) -> Result<Box<Expression>, SimpleError> {
+  fn parse_binary_op<Next: Fn(&mut Parser) -> Result<Box<Expression>, SimpleError>>(&mut self, ops: &[&str], next: Next) -> Result<Box<Expression>, SimpleError> {
     let mut left = next(self)?;
 
     let mut maybe_op = self.peek();
@@ -157,6 +171,33 @@ impl Lexer {
     }
 
     Ok(left)
+  }
+
+  fn parse_call(&mut self) -> Result<Box<Expression>, SimpleError> {
+    let func = self.parse_block()?;
+
+    if self.check_literal("(") {
+      let mut args = Vec::new();
+
+      if !self.check_literal(")") {
+        args.push(self.parse_block()?);
+
+        while self.check_literal(",") {
+          args.push(self.parse_block()?);
+        }
+
+        self.expect_literal(")")?;
+      }
+
+      return Ok(Box::new(Expression::Call {
+        shape: shape_unknown(),
+        loc: func.loc().clone(),
+        func,
+        args
+      }))
+    } else {
+      return Ok(func);
+    }
   }
 
   fn parse_block(&mut self) -> Result<Box<Expression>, SimpleError> {
@@ -208,6 +249,42 @@ impl Lexer {
     Ok(Box::new(raw))
   }
 
+  fn parse_type(&mut self) -> Result<Shape, SimpleError> {
+    self.parse_type_function()
+  }
+
+  fn parse_type_function(&mut self) -> Result<Shape, SimpleError> {
+    if self.check_literal("{") {
+      let mut args = Vec::new();
+
+      if !self.check_literal("=>") {
+        args.push(self.parse_type()?);
+
+        while self.check_literal(",") {
+          args.push(self.parse_type()?);
+        }
+
+        self.expect_literal("=>")?;
+      }
+
+      let result = Box::new(self.parse_type()?);
+
+      self.expect_literal("}")?;
+
+      return Ok(Shape::SimpleFunctionShape {
+        args,
+        result
+      })
+    } else {
+      return self.parse_type_term();
+    }
+  }
+
+  fn parse_type_term(&mut self) -> Result<Shape, SimpleError> {
+    let token = self.expect_kind(TokenKind::Id)?;
+    Ok(shape_named(token.value))
+  }
+
   fn expect_literal(&mut self, value: &str) -> Result<Token, SimpleError> {
     let token = self.next();
 
@@ -225,6 +302,28 @@ impl Lexer {
       return token.expected(format!("{:?}", kind).as_ref());
     } else {
       Ok(token)
+    }
+  }
+
+  fn check_literal(&mut self, value: &str) -> bool {
+    let token = self.peek();
+
+    if token.value != value {
+      return false;
+    } else {
+      self.skip();
+      return true;
+    }
+  }
+
+  fn check_kind(&mut self, kind: TokenKind) -> bool {
+    let token = self.next();
+
+    if token.kind != kind {
+      return false;
+    } else {
+      self.skip();
+      return true;
     }
   }
 
@@ -248,21 +347,21 @@ impl Lexer {
 }
 
 
-const SINGLE_OPS: &'static str = "(){}<>[];";
-const MERGE_OPS: &'static str = "=+-*/:";
+const SINGLE_OPS: &'static str = "(){}[];,";
+const MERGE_OPS: &'static str = "=+-*/:<>";
 
-struct Tokenizer {
+struct Lexer {
   src: String,
   reader: CharReader<BufReader<File>>,
 }
 
-impl Tokenizer {
-  fn new(src: &str) -> Result<Tokenizer, SimpleError> {
+impl Lexer {
+  fn new(src: &str) -> Result<Lexer, SimpleError> {
     let file = File::open(src).map_err(SimpleError::from)?;
     let buff = BufReader::new(file);
     let reader = CharReader::new(buff);
 
-    Ok(Tokenizer { reader, src: String::from(src) })
+    Ok(Lexer { reader, src: String::from(src) })
   }
 
   fn point(&self) -> Location {
@@ -270,20 +369,20 @@ impl Tokenizer {
     Location { x, y, src: self.src.clone() }
   }
 
-  fn parse(&mut self) -> Token {
+  fn lex(&mut self) -> Token {
     let is_space = |ch: char| ch.is_whitespace();
     let is_merge_op = |ch: char| MERGE_OPS.contains(ch);
 
     // Effectively skips whitespace by parsing and never saving it.
-    self.parse_word(TokenKind::EOF, is_space, is_space);
-    self.parse_word(TokenKind::Id, |ch| ch.is_alphabetic(), |ch| ch.is_alphanumeric())
-      .or_else(|| self.parse_word(TokenKind::Symbol, |ch| SINGLE_OPS.contains(ch), |_ch| { false }))
-      .or_else(|| self.parse_word(TokenKind::Symbol, is_merge_op, is_merge_op))
-      .or_else(|| self.parse_word(TokenKind::Number, |ch| ch.is_numeric(), |ch| ch.is_numeric() || ch == '.'))
+    self.lex_word(TokenKind::EOF, is_space, is_space);
+    self.lex_word(TokenKind::Id, |ch| ch.is_alphabetic(), |ch| ch.is_alphanumeric())
+      .or_else(|| self.lex_word(TokenKind::Symbol, |ch| SINGLE_OPS.contains(ch), |_ch| { false }))
+      .or_else(|| self.lex_word(TokenKind::Symbol, is_merge_op, is_merge_op))
+      .or_else(|| self.lex_word(TokenKind::Number, |ch| ch.is_numeric(), |ch| ch.is_numeric() || ch == '.'))
       .unwrap_or_else(|| Token { kind: TokenKind::EOF, value: String::from("<EOF>"), location: self.point() })
   }
 
-  fn parse_word<L: Fn(char) -> bool, R: Fn(char) -> bool>(&mut self, kind: TokenKind, test_first: L, test: R) -> Option<Token> {
+  fn lex_word<L: Fn(char) -> bool, R: Fn(char) -> bool>(&mut self, kind: TokenKind, test_first: L, test: R) -> Option<Token> {
     match self.reader.current {
       Some(first) => if test_first(first) {
         let location = self.point();

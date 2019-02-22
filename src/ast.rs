@@ -1,4 +1,5 @@
 use shapes::*;
+use simple_error::SimpleError;
 
 
 #[derive(Debug, Clone)]
@@ -11,6 +12,14 @@ pub struct Location {
 impl Location {
   pub fn pretty(&self) -> String {
     format!("at file: {}, line: {}, column: {}", self.src, self.y, self.x)
+  }
+
+  pub fn fail<T>(&self, message: &str) -> Result<T, SimpleError> {
+    Err(SimpleError::new(format!("{} {}" ,message, self.pretty())))
+  }
+
+  pub fn error(&self, message: &str) -> SimpleError {
+    SimpleError::new(format!("{} {}" ,message, self.pretty()))
   }
 }
 
@@ -44,6 +53,13 @@ pub enum Expression {
     left: Box<Expression>,
     right: Box<Expression>,
   },
+  Call {
+    shape: Shape,
+    loc: Location,
+
+    func: Box<Expression>,
+    args: Vec<Box<Expression>>,
+  },
   Block {
     shape: Shape,
     loc: Location,
@@ -69,6 +85,7 @@ impl Expression {
       Expression::Assignment { loc, .. } => loc,
       Expression::Variable { loc, .. } => loc,
       Expression::BinaryOp { loc, .. } => loc,
+      Expression::Call {loc, ..} => loc,
       Expression::Block { loc, .. } => loc,
       Expression::StringLiteral { loc, .. } => loc,
       Expression::NumberLiteral { loc, .. } => loc,
@@ -81,6 +98,7 @@ impl Expression {
       Expression::Assignment { shape, .. } => shape,
       Expression::Variable { shape, .. } => shape,
       Expression::BinaryOp { shape, .. } => shape,
+      Expression::Call {shape, ..} => shape,
       Expression::Block { shape, .. } => shape,
       Expression::StringLiteral { shape, .. } => shape,
       Expression::NumberLiteral { shape, .. } => shape,

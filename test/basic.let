@@ -1,8 +1,11 @@
 
 
+fun add(a: Float, b: Float): Float = a + b
+
+fun higher(op: {Float, Float => Float}): Float = op(2, 4)
 
 export fun main(): Float = {
-    let x = 5 + {4 + 6} / 2 - 2 * 3;
+    let x = higher(add);
     x
 }
 

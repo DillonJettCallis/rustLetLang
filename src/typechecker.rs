@@ -58,7 +58,7 @@ fn check(scope: &mut Scope, ex: Expression) -> Result<Expression, SimpleError> {
 
       let returned_shape = body.shape().clone();
 
-      let final_result_shape = verify(&result_shape, returned_shape, &loc)?;
+      let final_result_shape = verify(result_shape, returned_shape, &loc)?;
 
       destroy_scope(scope);
 
@@ -86,8 +86,7 @@ fn check(scope: &mut Scope, ex: Expression) -> Result<Expression, SimpleError> {
     }
     Expression::Assignment{shape: raw_shape, id, loc, body: raw_body} => {
       let body = check(scope, *raw_body)?;
-      let filled_shape = fill_shape(raw_shape, &loc)?;
-      let shape = verify(&filled_shape, body.shape().clone(), &loc)?;
+      let shape = verify(raw_shape, body.shape().clone(), &loc)?;
 
       set_scope(scope, &id, &shape, &loc)?;
 
@@ -98,13 +97,41 @@ fn check(scope: &mut Scope, ex: Expression) -> Result<Expression, SimpleError> {
       let right = check(scope, *raw_right)?;
 
       if left.shape() == right.shape() {
-        let filled_shape = fill_shape(raw_shape, &loc)?;
-        let shape = verify(&filled_shape, left.shape().clone(), &loc)?;
+        let shape = verify(raw_shape, left.shape().clone(), &loc)?;
         Ok(Expression::BinaryOp{shape, left: Box::new(left), right: Box::new(right), op, loc})
       } else {
         Err(SimpleError::new(format!("Incompatible types! Cannot perform operation '{}' on distinct types '{}' and '{}' {}", op, left.shape().pretty(), right.shape().pretty(), loc.pretty())))
       }
-    }
+    },
+    Expression::Call {shape: raw_shape, loc, func: raw_func, args: raw_args} => {
+      let func = check(scope, *raw_func)?;
+      let mut args = Vec::new();
+
+      for raw_arg in raw_args {
+        args.push(Box::new(check(scope, *raw_arg)?));
+      }
+
+      if let Shape::SimpleFunctionShape {args: expected_args, result} = func.shape().clone() {
+        if args.len() != expected_args.len() {
+          return loc.fail("Incorrect number of arguments")?;
+        }
+
+        for index in 0..args.len() {
+          if args[index].shape() != &expected_args[index] {
+            return loc.fail("Invalid argument types for call")?;
+          }
+        }
+
+        Ok(Expression::Call {
+          shape: *result,
+          loc,
+          func: Box::new(func),
+          args
+        })
+      } else {
+        return loc.fail("Attempt to call non-function");
+      }
+    },
     Expression::Variable{shape: raw_shape, loc, id} => {
       let shape = check_scope(scope, &id, &loc)?;
 
@@ -137,20 +164,21 @@ fn fill_shape(shape: Shape, loc: &Location) -> Result<Shape, SimpleError> {
         _ => Err(SimpleError::new(format!("Could not find type: {}, {}", name, loc.pretty())))
       }
     },
-    _ => {
-      Ok(shape)
-    }
+    Shape::BaseShape{..} => Ok(shape),
+    _ => loc.fail("Unknown shape"),
   }
 }
 
-fn verify(defined: &Shape, found: Shape, loc: &Location) -> Result<Shape, SimpleError> {
+fn verify(defined: Shape, found: Shape, loc: &Location) -> Result<Shape, SimpleError> {
   if let Shape::UnknownShape = defined {
     Ok(found)
   } else {
-    if *defined == found {
+    let filled_defined = fill_shape(defined, loc)?;
+
+    if filled_defined == found {
       Ok(found)
     } else {
-      Err(SimpleError::new(format!("Incompatible types! Declared: {}, but found: {}, {}", defined.pretty(), found.pretty(), loc.pretty())))
+      Err(SimpleError::new(format!("Incompatible types! Declared: {}, but found: {}, {}", filled_defined.pretty(), found.pretty(), loc.pretty())))
     }
   }
 }
