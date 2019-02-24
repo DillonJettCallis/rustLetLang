@@ -28,17 +28,17 @@ impl Debug for RunFunction {
 
 pub struct Machine {
   app: AppDirectory,
-  core_functions: HashMap<String, Box<RunFunction>>,
+  core_functions: HashMap<String, Rc<RunFunction>>,
 }
 
 impl Machine {
 
   pub fn new(app: AppDirectory) -> Machine {
-    let mut core_functions: HashMap<String, Box<RunFunction>> = HashMap::new();
-    core_functions.insert(String::from("Core.+"), Box::new(float_op("Core.+", |l, r| l + r)));
-    core_functions.insert(String::from("Core.-"), Box::new(float_op("Core.-", |l, r| l - r)));
-    core_functions.insert(String::from("Core.*"), Box::new(float_op("Core.*", |l, r| l * r)));
-    core_functions.insert(String::from("Core./"), Box::new(float_op("Core./", |l, r| l / r)));
+    let mut core_functions: HashMap<String, Rc<RunFunction>> = HashMap::new();
+    core_functions.insert(String::from("Core.+"), Rc::new(float_op("Core.+", |l, r| l + r)));
+    core_functions.insert(String::from("Core.-"), Rc::new(float_op("Core.-", |l, r| l - r)));
+    core_functions.insert(String::from("Core.*"), Rc::new(float_op("Core.*", |l, r| l * r)));
+    core_functions.insert(String::from("Core./"), Rc::new(float_op("Core./", |l, r| l / r)));
     Machine{app, core_functions}
   }
 
@@ -80,9 +80,9 @@ impl Machine {
         Instruction::LoadConstNull => {
           stack.push(Value::Null);
         },
-        Instruction::LoadConst{kind, const_id} => {
+        Instruction::LoadConst{ref kind, const_id} => {
           match kind {
-            0 => { // String
+            LoadType::String => {
               let index = const_id as usize;
 
               let value: &String = self.app.string_constants.get(index)
@@ -90,6 +90,16 @@ impl Machine {
 
               stack.push(Value::String(Rc::new(value.clone())));
             },
+            LoadType::Function => {
+              let index = const_id as usize;
+
+              let func_ref = &self.app.function_refs[index];
+              let boxed = self.app.functions.get(&func_ref.name)
+                .ok_or_else(|| SimpleError::new("Invalid bytecode. Invalid Function constant id"))?
+                .clone();
+
+              stack.push(Value::Function(boxed));
+            }
             _ => return Err(SimpleError::new("Invalid bytecode. LoadConst of invalid kind"))
           }
         },

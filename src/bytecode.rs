@@ -6,6 +6,7 @@ use shapes::BaseShapeKind;
 use shapes::Shape;
 use std::collections::HashMap;
 use interpreter::RunFunction;
+use std::rc::Rc;
 
 pub type LocalId = u16;
 pub type ConstantId = u32;
@@ -13,10 +14,11 @@ pub type ConstantId = u32;
 pub struct AppDirectory {
   pub string_constants: Vec<String>,
   pub function_refs: Vec<FunctionRef>,
-  pub functions: HashMap<String, Box<RunFunction>>,
+  pub functions: HashMap<String, Rc<RunFunction>>,
   pub shape_refs: Vec<Shape>,
 }
 
+#[derive(Clone)]
 pub struct FunctionRef {
   pub name: String,
   pub shape: Shape,
@@ -29,6 +31,11 @@ pub struct BitFunction {
   pub source: Vec<SourcePoint>,
 }
 
+pub enum LoadType {
+  String,
+  Function
+}
+
 pub enum Instruction {
   NoOp, // 0 is an error to hopefully crash early on invalid bytecode.
   Duplicate,
@@ -36,7 +43,7 @@ pub enum Instruction {
   Swap,
   LoadConstNull,
   LoadConst {
-    kind: u8,
+    kind: LoadType,
     const_id: ConstantId
   },
   LoadConstFloat {
