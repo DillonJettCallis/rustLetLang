@@ -61,6 +61,10 @@ pub enum Instruction {
   CallDynamic {
     shape_id: ConstantId
   },
+  BuildClosure {
+    param_count: LocalId,
+    func_id: ConstantId,
+  },
   Return,
   IfEqual{jump: i32},
   IfNotEqual{jump: i32},

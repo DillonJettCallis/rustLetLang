@@ -78,6 +78,10 @@ impl Compiler {
     if let Expression::FunctionDeclaration { shape, loc, id, args, body, closures } = ex {
       context.reset(args.len() as LocalId);
 
+      for closure in closures {
+        context.store(closure);
+      }
+
       for arg in args {
         context.store(arg);
       }
@@ -104,15 +108,42 @@ impl Compiler {
     match ex {
       Expression::FunctionDeclaration {shape, loc, id, args, body, closures} => {
         if closures.is_empty() {
-          let full_id = format!("$closure:{}", id);
+          let full_id = format!("$closure:{}", context.gen_next_function_id());
           let (_, bit_func) = self.compile_function(context, ex)?;
           let const_id = context.add_function_ref(&full_id, shape.clone());
           context.functions.insert(full_id, Rc::new(bit_func));
           let local = context.store(&id);
           return Ok(vec![Instruction::LoadConst {kind: LoadType::Function, const_id}, Instruction::StoreValue { local }]);
-        }
+        } else {
+          let mut body = Vec::new();
 
-        unimplemented!();
+          for local in closures {
+            let lookup = context.lookup(local, loc)?;
+
+            match lookup {
+              Lookup::Local(local) => {
+                body.push(Instruction::LoadValue { local })
+              }
+              Lookup::Static(const_id) => {
+                body.push(Instruction::LoadConst {
+                  kind: LoadType::Function,
+                  const_id,
+                })
+              }
+            }
+          }
+
+          let full_id = format!("$closure:{}", context.gen_next_function_id());
+          let (_, bit_func) = self.compile_function(context, ex)?;
+          let func_id = context.add_function_ref(&full_id, shape.clone());
+          context.functions.insert(full_id, Rc::new(bit_func));
+          let local = context.store(&id);
+
+          body.push(Instruction::BuildClosure {param_count: closures.len() as LocalId, func_id});
+          body.push(Instruction::StoreValue { local });
+
+          return Ok(body);
+        }
       },
       Expression::Assignment { shape, loc, id, body } => {
         let mut assign = self.compile_expression(context, body)?;
@@ -248,6 +279,8 @@ struct ModuleContext {
 
   max_locals: u16,
   local: Vec<FuncContext>,
+
+  generated_function_count: usize,
 }
 
 impl ModuleContext {
@@ -264,6 +297,8 @@ impl ModuleContext {
 
       max_locals: 0,
       local: vec![FuncContext::new(0)],
+
+      generated_function_count: 0,
     }
   }
 
@@ -332,6 +367,12 @@ impl ModuleContext {
     if let Some(last) = self.local.pop() {
       self.max_locals = max(self.max_locals, last.max_locals);
     }
+  }
+
+  fn gen_next_function_id(&mut self) -> usize {
+    let id = self.generated_function_count;
+    self.generated_function_count = id + 1;
+    id
   }
 }
 

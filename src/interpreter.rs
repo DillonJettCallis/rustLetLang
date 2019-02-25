@@ -183,6 +183,32 @@ impl Machine {
             return Err(SimpleError::new("Invalid bytecode. CallDynamic is not function"))
           }
         },
+        Instruction::BuildClosure {param_count, func_id} => {
+          let func_ref: &FunctionRef = self.app.function_refs.get(func_id as usize)
+            .ok_or_else(|| SimpleError::new("Invalid bytecode. Invalid function id"))?;
+
+          let func = self.core_functions.get(&func_ref.name)
+            .or_else(||self.app.functions.get(&func_ref.name))
+            .ok_or_else(|| SimpleError::new("Invalid bytecode. Function with name not found"))?
+            .clone();
+
+          let mut params = Vec::with_capacity(param_count as usize);
+
+          for _ in 0..param_count {
+            let param = stack.pop()
+              .ok_or_else(|| SimpleError::new("Invalid bytecode. Not enough args for closure"))?;
+            params.push(param);
+          }
+
+          params.reverse();
+
+          let closure = ClosureFunction {
+            func,
+            closures: params
+          };
+
+          stack.push(Value::Function(Rc::new(closure)));
+        },
         Instruction::Return => {
           return stack.pop()
             .ok_or_else(|| SimpleError::new("Invalid bytecode. Attempt to return empty stack"));
@@ -240,6 +266,26 @@ impl RunFunction for BitFunction {
   fn get_shape(&self) -> &Shape {
     &self.shape
   }
+}
+
+struct ClosureFunction {
+  func: Rc<RunFunction>,
+  closures: Vec<Value>,
+}
+
+impl RunFunction for ClosureFunction {
+
+  fn execute(&self, machine: &Machine, args: Vec<Value>) -> Result<Value, SimpleError> {
+    let mut locals = self.closures.clone();
+    let mut arg = args; // This is a weird hack I don't understand.
+    locals.append(&mut arg);
+    self.func.execute(machine, locals)
+  }
+
+  fn get_shape(&self) -> &Shape {
+    &self.func.get_shape()
+  }
+
 }
 
 struct NativeFunction<T> {
