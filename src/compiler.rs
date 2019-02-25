@@ -34,7 +34,6 @@ impl Compiler {
   }
 
   fn compile_app(mut self, core: CoreContext, module: Module) -> Result<AppDirectory, SimpleError> {
-    let mut functions: HashMap<String, Rc<RunFunction>> = HashMap::new();
     let mut context = ModuleContext::new(core);
 
 
@@ -55,26 +54,28 @@ impl Compiler {
     for export in module.exports {
       let (id, bit_func) = self.compile_function(&mut context, &export.content)?;
 
-      functions.insert(id, Rc::new(bit_func));
+      context.functions.insert(id, Rc::new(bit_func));
     }
 
     for func in module.locals {
       let (id, bit_func) = self.compile_function(&mut context, &func)?;
 
-      functions.insert(id, Rc::new(bit_func));
+      context.functions.insert(id, Rc::new(bit_func));
     }
 
     let Compiler { shape_refs } = self;
+    let ModuleContext{string_constants, function_refs, functions, ..} = context;
+
     Ok(AppDirectory {
-      string_constants: context.string_constants.clone(),
-      function_refs: context.function_refs.clone(),
+      string_constants,
+      function_refs,
       functions,
       shape_refs,
     })
   }
 
   fn compile_function(&mut self, context: &mut ModuleContext, ex: &Expression) -> Result<(String, BitFunction), SimpleError> {
-    if let Expression::FunctionDeclaration { shape, loc, id, args, body } = ex {
+    if let Expression::FunctionDeclaration { shape, loc, id, args, body, closures } = ex {
       context.reset(args.len() as LocalId);
 
       for arg in args {
@@ -101,6 +102,18 @@ impl Compiler {
 
   fn compile_expression(&mut self, context: &mut ModuleContext, ex: &Expression) -> Result<Vec<Instruction>, SimpleError> {
     match ex {
+      Expression::FunctionDeclaration {shape, loc, id, args, body, closures} => {
+        if closures.is_empty() {
+          let full_id = format!("$closure:{}", id);
+          let (_, bit_func) = self.compile_function(context, ex)?;
+          let const_id = context.add_function_ref(&full_id, shape.clone());
+          context.functions.insert(full_id, Rc::new(bit_func));
+          let local = context.store(&id);
+          return Ok(vec![Instruction::LoadConst {kind: LoadType::Function, const_id}, Instruction::StoreValue { local }]);
+        }
+
+        unimplemented!();
+      },
       Expression::Assignment { shape, loc, id, body } => {
         let mut assign = self.compile_expression(context, body)?;
         let local = context.store(id);
@@ -225,6 +238,7 @@ impl CoreContext {
 
 struct ModuleContext {
   core: CoreContext,
+  functions: HashMap<String, Rc<RunFunction>>,
 
   function_ref_map: HashMap<String, (ConstantId, FunctionRef)>,
   function_refs: Vec<FunctionRef>,
@@ -240,6 +254,8 @@ impl ModuleContext {
   fn new(core: CoreContext) -> ModuleContext {
     ModuleContext {
       core,
+      functions: HashMap::new(),
+
       function_ref_map: HashMap::new(),
       function_refs: Vec::new(),
 
@@ -348,7 +364,7 @@ impl FuncContext {
 
   fn lookup(&self, id: &str) -> Option<Lookup> {
     if let Some(local_id) = self.locals.get(id) {
-      Some((Lookup::Local(local_id.clone())))
+      Some(Lookup::Local(local_id.clone()))
     } else {
       None
     }

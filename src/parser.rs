@@ -106,7 +106,7 @@ impl Parser {
 
     let shape = Shape::SimpleFunctionShape{ args: arg_types, result: Box::new(shape_named(result_type_name))};
 
-    Ok(Box::new(Expression::FunctionDeclaration { shape, loc, id, args, body }))
+    Ok(Box::new(Expression::FunctionDeclaration { shape, loc, id, args, body, closures: Vec::new() }))
   }
 
   fn parse_statement(&mut self) -> Result<Box<Expression>, SimpleError> {

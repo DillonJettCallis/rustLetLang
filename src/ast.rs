@@ -31,6 +31,7 @@ pub enum Expression {
     id: String,
     args: Vec<String>,
     body: Box<Expression>,
+    closures: Vec<String>,
   },
   Assignment {
     shape: Shape,

@@ -5,8 +5,6 @@ use simple_error::*;
 use ast::*;
 use shapes::*;
 
-type Scope = Vec<HashMap<String, Shape>>;
-
 // min error
 // Err(SimpleError::new(""))
 
@@ -14,26 +12,26 @@ pub fn check_module(module: Module) -> Result<Module, SimpleError> {
   let mut exports: Vec<Export> = Vec::new();
   let mut locals: Vec<Box<Expression>> = Vec::new();
 
-  let mut scope_stack: Vec<HashMap<String, Shape>> = Vec::new();
-  create_scope(&mut scope_stack);
+  let mut scope = Scope::new();
+  scope.create_function_scope();
 
   for ref ex in &module.exports {
-    pre_fill_module_function(&mut scope_stack, &ex.content)?;
+    scope.pre_fill_module_function(&ex.content)?;
   }
 
   for ref ex in &module.locals {
-    pre_fill_module_function(&mut scope_stack, &ex)?;
+    scope.pre_fill_module_function(&ex)?;
   }
 
   for ex in module.exports {
     let loc = ex.loc.clone();
-    let content = Box::new(check(&mut scope_stack, *ex.content)?);
+    let content = Box::new(check(&mut scope, *ex.content)?);
 
     exports.push(Export{content, loc});
   }
 
   for ex in module.locals {
-    let content = check(&mut scope_stack, *ex)?;
+    let content = check(&mut scope, *ex)?;
 
     locals.push(Box::new(content));
   }
@@ -44,14 +42,15 @@ pub fn check_module(module: Module) -> Result<Module, SimpleError> {
 
 fn check(scope: &mut Scope, ex: Expression) -> Result<Expression, SimpleError> {
   match ex {
-    Expression::FunctionDeclaration{shape: raw_shape, loc, id, args, body: raw_body} => {
+    Expression::FunctionDeclaration{shape: raw_shape, loc, id, args, body: raw_body, ..} => {
       let filled_shape = fill_shape(raw_shape, &loc)?;
       let (arg_shapes, result_shape) = verify_function_declaration(&filled_shape, &args, &loc)?;
 
-      create_scope(scope);
+      scope.set_scope(&id, &filled_shape, &loc)?;
+      scope.create_function_scope();
 
       for (arg_id, arg_shape) in args.iter().zip(arg_shapes.iter()) {
-        set_scope(scope, arg_id, arg_shape, &loc)?;
+        scope.set_scope(arg_id, arg_shape, &loc)?;
       }
 
       let body = check(scope, *raw_body)?;
@@ -60,11 +59,11 @@ fn check(scope: &mut Scope, ex: Expression) -> Result<Expression, SimpleError> {
 
       let final_result_shape = verify(result_shape, returned_shape, &loc)?;
 
-      destroy_scope(scope);
+      let closures = scope.destroy_function_scope();
 
       let shape = Shape::SimpleFunctionShape {args: arg_shapes, result: Box::new(final_result_shape)};
 
-      Ok(Expression::FunctionDeclaration{shape, body: Box::new(body), id, args, loc})
+      Ok(Expression::FunctionDeclaration{shape, body: Box::new(body), id, args, loc, closures})
     }
     Expression::Block{shape: raw_shape, loc, body: raw_body} => {
       let mut body: Vec<Box<Expression>> = Vec::with_capacity(raw_body.len());
@@ -72,14 +71,14 @@ fn check(scope: &mut Scope, ex: Expression) -> Result<Expression, SimpleError> {
       if raw_body.len() == 0 {
         Ok(Expression::Block{shape: shape_unit(), loc, body})
       } else {
-        create_scope(scope);
+        scope.create_block_scope();
 
         for next in raw_body {
           body.push(Box::new(check(scope, *next)?));
         }
         let shape = body.last().expect("This shouldn't be possible!").shape().clone();
 
-        destroy_scope(scope);
+        scope.destroy_block_scope();
 
         Ok(Expression::Block{shape, loc, body})
       }
@@ -88,7 +87,7 @@ fn check(scope: &mut Scope, ex: Expression) -> Result<Expression, SimpleError> {
       let body = check(scope, *raw_body)?;
       let shape = verify(raw_shape, body.shape().clone(), &loc)?;
 
-      set_scope(scope, &id, &shape, &loc)?;
+      scope.set_scope(&id, &shape, &loc)?;
 
       Ok(Expression::Assignment{shape, id, loc, body: Box::new(body)})
     }
@@ -133,7 +132,7 @@ fn check(scope: &mut Scope, ex: Expression) -> Result<Expression, SimpleError> {
       }
     },
     Expression::Variable{shape: raw_shape, loc, id} => {
-      let shape = check_scope(scope, &id, &loc)?;
+      let shape = scope.check_scope(&id, &loc)?;
 
       Ok(Expression::Variable {shape, loc, id})
     }
@@ -195,43 +194,86 @@ fn verify_function_declaration(defined: &Shape, arg_ids: &Vec<String>, loc: &Loc
   }
 }
 
-fn pre_fill_module_function(scope: &mut Scope, ex: &Expression) -> Result<(), SimpleError> {
-  if let Expression::FunctionDeclaration {shape, loc, id, ..} = ex {
-    let shape = fill_shape(ex.shape().clone(), &ex.loc())?;
 
-    set_scope(scope, id, &shape, &loc)
-  } else {
-    Err(SimpleError::new(format!("Invalid function declaration: {}", ex.loc().pretty())))
-  }
+struct Scope {
+  static_scope: HashMap<String, Shape>,
+  block_stack: Vec<Vec<HashMap<String, Shape>>>,
+  closures: Vec<Vec<String>>,
 }
 
-fn set_scope(scope_stack: &mut Scope, id: &String, shape: &Shape, loc: &Location) -> Result<(), SimpleError> {
-  let scope = scope_stack.last_mut().expect("Scope should never be empty!");
+impl Scope {
 
-  if scope.contains_key(id) {
-    Err(SimpleError::new(format!("Redeclaration of variable: {} {}", id, loc.pretty())))
-  } else {
-    scope.insert(id.clone(), shape.clone());
-    Ok(())
-  }
-}
-
-fn check_scope(scope_stack: &Scope, id: &String, loc: &Location) -> Result<Shape, SimpleError> {
-  for i in (0..scope_stack.len()).rev() {
-    let scope = &scope_stack[i];
-
-    if scope.contains_key(id) {
-      return Ok(scope[id].clone());
+  fn new() -> Scope {
+    Scope{
+      static_scope: HashMap::new(),
+      block_stack: Vec::new(),
+      closures: Vec::new(),
     }
   }
 
-  Err(SimpleError::new(format!("Undeclared variable: {} {}", id, loc.pretty())))
-}
+  fn pre_fill_module_function(&mut self, ex: &Expression) -> Result<(), SimpleError> {
+    if let Expression::FunctionDeclaration { shape, loc, id, .. } = ex {
+      let shape = fill_shape(ex.shape().clone(), &ex.loc())?;
 
-fn create_scope(scope_stack: &mut Scope) {
-  scope_stack.push(HashMap::new());
-}
+      self.static_scope.insert(id.clone(), shape);
+      Ok(())
+    } else {
+      Err(SimpleError::new(format!("Invalid function declaration: {}", ex.loc().pretty())))
+    }
+  }
 
-fn destroy_scope(scope_stack: &mut Scope) {
-  scope_stack.pop();
+  fn set_scope(&mut self, id: &String, shape: &Shape, loc: &Location) -> Result<(), SimpleError> {
+    let block_scope = self.block_stack.last_mut().expect("Scope should never be empty!");
+    let scope = block_scope.last_mut().expect("Block Scope should never be empty!");
+
+    if scope.contains_key(id) {
+      Err(SimpleError::new(format!("Redeclaration of variable: {} {}", id, loc.pretty())))
+    } else {
+      scope.insert(id.clone(), shape.clone());
+      Ok(())
+    }
+  }
+
+  fn check_scope(&mut self, id: &String, loc: &Location) -> Result<Shape, SimpleError> {
+    let mut first = true;
+
+    for block_scope in self.block_stack.iter().rev() {
+      for scope in block_scope {
+        if scope.contains_key(id) {
+          if !first {
+            self.closures.last_mut().expect("closures should never be empty!").push(id.clone());
+          }
+
+          return Ok(scope[id].clone());
+        }
+      }
+
+      first = false;
+    }
+
+    if self.static_scope.contains_key(id) {
+      return Ok(self.static_scope[id].clone())
+    }
+
+    Err(SimpleError::new(format!("Undeclared variable: {} {}", id, loc.pretty())))
+  }
+
+  fn create_block_scope(&mut self) {
+    self.block_stack.push(vec![HashMap::new()]);
+  }
+
+  fn destroy_block_scope(&mut self) {
+    self.block_stack.pop();
+  }
+
+  fn create_function_scope(&mut self) {
+    self.create_block_scope();
+    self.closures.push(Vec::new());
+  }
+
+  fn destroy_function_scope(&mut self) -> Vec<String> {
+    self.destroy_block_scope();
+    self.closures.pop()
+      .expect("closures should never be empty!")
+  }
 }
