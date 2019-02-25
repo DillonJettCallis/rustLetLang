@@ -2,7 +2,7 @@
 
 
 
-fun higher(op: {Float, Float => Float}): Float = op(2, 4)
+fun higher(op: {Float, Float -> Float}): Float = op(2, 4)
 
 export fun main(): Float = {
     let outside = 2;

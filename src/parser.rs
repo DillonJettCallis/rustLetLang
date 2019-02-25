@@ -257,14 +257,14 @@ impl Parser {
     if self.check_literal("{") {
       let mut args = Vec::new();
 
-      if !self.check_literal("=>") {
+      if !self.check_literal("->") {
         args.push(self.parse_type()?);
 
         while self.check_literal(",") {
           args.push(self.parse_type()?);
         }
 
-        self.expect_literal("=>")?;
+        self.expect_literal("->")?;
       }
 
       let result = Box::new(self.parse_type()?);
