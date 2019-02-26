@@ -98,15 +98,61 @@ impl Parser {
 
     self.expect_literal(":")?;
 
-    let result_type_name = self.expect_kind(TokenKind::Id)?.value;
+    let result_type = self.parse_type()?;
 
     self.expect_literal("=")?;
 
     let body = self.parse_expression()?;
 
-    let shape = Shape::SimpleFunctionShape{ args: arg_types, result: Box::new(shape_named(result_type_name))};
+    let shape = Shape::SimpleFunctionShape{ args: arg_types, result: Box::new(result_type)};
 
     Ok(Box::new(Expression::FunctionDeclaration { shape, loc, id, args, body, closures: Vec::new() }))
+  }
+
+  fn parse_lambda(&mut self) -> Result<Box<Expression>, SimpleError> {
+    // assume we've already checked and confirmed this is a lambda.
+
+    let loc = self.peek_back().location;
+    let mut args = Vec::new();
+    let mut arg_types = Vec::new();
+
+    let maybe_arrow = self.peek();
+
+    if maybe_arrow.value != "->" && maybe_arrow.value != "=>" {
+      args.push(self.expect_kind(TokenKind::Id)?.value);
+      self.expect_literal(":")?;
+      arg_types.push(self.parse_type()?);
+
+      while self.check_literal(",") {
+        args.push(self.expect_kind(TokenKind::Id)?.value);
+        self.expect_literal(":")?;
+        arg_types.push(self.parse_type()?);
+      }
+    }
+
+    let result_type = if self.check_literal("->") {
+      self.parse_type()?
+    } else {
+      shape_unknown()
+    };
+
+    let block_loc = self.expect_literal("=>")?.location;
+
+    let mut body: Vec<Box<Expression>> = Vec::new();
+
+    while !self.check_literal("}") {
+      body.push(self.parse_statement()?)
+    }
+
+    let block = Box::new(Expression::Block {
+      loc: block_loc,
+      shape: shape_unknown(),
+      body
+    });
+
+    let shape = Shape::SimpleFunctionShape{ args: arg_types, result: Box::new(result_type)};
+
+    Ok(Box::new(Expression::FunctionDeclaration { shape, loc, id: "<anon>".to_string(), args, body: block, closures: Vec::new() }))
   }
 
   fn parse_statement(&mut self) -> Result<Box<Expression>, SimpleError> {
@@ -201,14 +247,14 @@ impl Parser {
   }
 
   fn parse_block(&mut self) -> Result<Box<Expression>, SimpleError> {
-    let maybe_brace = self.peek();
+    if self.check_literal("{") {
+      if self.check_is_lambda() {
+        return self.parse_lambda();
+      }
 
-    if "{" == maybe_brace.value {
-      let loc = maybe_brace.location.clone();
+      let loc = self.peek_back().location;
       let shape = shape_unknown();
       let mut body: Vec<Box<Expression>> = Vec::new();
-      // Skip '{'
-      self.skip();
 
       while "}" != self.peek().value {
         body.push(self.parse_statement()?)
@@ -285,6 +331,36 @@ impl Parser {
     Ok(shape_named(token.value))
   }
 
+  /**
+  Assume '{' is already parsed.
+  We want to look ahead and see if we can find a => to denote this
+  is a lambda or just a function.
+  **/
+  fn check_is_lambda(&self) -> bool {
+    let mut index = self.index + 1;
+    let mut opens = 1;
+
+    while index < self.tokens.len() {
+      let token = &self.tokens[index];
+      index = index + 1;
+
+      match token.value.as_ref() {
+        "{" => {
+          opens = opens + 1;
+        }
+        "}" => {
+          opens = opens - 1;
+        }
+        "=>" => {
+          return opens == 1;
+        }
+        _ => {}
+      }
+    }
+
+    false
+  }
+
   fn expect_literal(&mut self, value: &str) -> Result<Token, SimpleError> {
     let token = self.next();
 
@@ -335,6 +411,10 @@ impl Parser {
 
   fn peek(&self) -> Token {
     self.tokens[self.index].clone()
+  }
+
+  fn peek_back(&self) -> Token {
+    self.tokens[self.index - 1].clone()
   }
 
   fn skip(&mut self) {

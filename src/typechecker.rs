@@ -43,10 +43,12 @@ pub fn check_module(module: Module) -> Result<Module, SimpleError> {
 fn check(scope: &mut Scope, ex: Expression) -> Result<Expression, SimpleError> {
   match ex {
     Expression::FunctionDeclaration{shape: raw_shape, loc, id, args, body: raw_body, ..} => {
-      let filled_shape = fill_shape(raw_shape, &loc)?;
-      let (arg_shapes, result_shape) = verify_function_declaration(&filled_shape, &args, &loc)?;
+      let (arg_shapes, result_shape) = verify_function_declaration(&raw_shape, &args, &loc)?;
 
-      scope.set_scope(&id, &filled_shape, &loc)?;
+      if id != "<anon>" {
+        scope.set_scope(&id, &fill_shape(&raw_shape, &loc)?, &loc)?;
+      }
+
       scope.create_function_scope();
 
       for (arg_id, arg_shape) in args.iter().zip(arg_shapes.iter()) {
@@ -141,7 +143,7 @@ fn check(scope: &mut Scope, ex: Expression) -> Result<Expression, SimpleError> {
   }
 }
 
-fn fill_shape(shape: Shape, loc: &Location) -> Result<Shape, SimpleError> {
+fn fill_shape(shape: &Shape, loc: &Location) -> Result<Shape, SimpleError> {
   match shape {
     Shape::SimpleFunctionShape { args: raw_args, result: raw_result } => {
       let mut args: Vec<Shape> = Vec::new();
@@ -150,7 +152,7 @@ fn fill_shape(shape: Shape, loc: &Location) -> Result<Shape, SimpleError> {
         args.push(fill_shape(next_arg, loc)?);
       }
 
-      let result = Box::new(fill_shape(*raw_result, loc)?);
+      let result = Box::new(fill_shape(raw_result, loc)?);
 
       Ok(Shape::SimpleFunctionShape{args, result})
     }
@@ -163,7 +165,7 @@ fn fill_shape(shape: Shape, loc: &Location) -> Result<Shape, SimpleError> {
         _ => Err(SimpleError::new(format!("Could not find type: {}, {}", name, loc.pretty())))
       }
     },
-    Shape::BaseShape{..} => Ok(shape),
+    Shape::BaseShape{..} => Ok(shape.clone()),
     _ => loc.fail("Unknown shape"),
   }
 }
@@ -172,7 +174,7 @@ fn verify(defined: Shape, found: Shape, loc: &Location) -> Result<Shape, SimpleE
   if let Shape::UnknownShape = defined {
     Ok(found)
   } else {
-    let filled_defined = fill_shape(defined, loc)?;
+    let filled_defined = fill_shape(&defined, loc)?;
 
     if filled_defined == found {
       Ok(found)
@@ -187,7 +189,13 @@ fn verify_function_declaration(defined: &Shape, arg_ids: &Vec<String>, loc: &Loc
     if args.len() != arg_ids.len() {
       Err(SimpleError::new( format!("Incompatible types! Function type has different number of parameters than named arguments. Type: {}, args found: {} {}", defined.pretty(), arg_ids.len(), loc.pretty())))
     } else {
-      Ok( (args.clone(), *result.clone()) )
+      let mut filled_args = Vec::new();
+
+      for arg in args {
+        filled_args.push(fill_shape(arg, loc)?);
+      }
+
+      Ok( (filled_args, *result.clone()) )
     }
   } else {
     Err(SimpleError::new( format!("Function has type that is not a function type! Declared type: '{}' {}", defined.pretty(), loc.pretty())))
@@ -213,7 +221,7 @@ impl Scope {
 
   fn pre_fill_module_function(&mut self, ex: &Expression) -> Result<(), SimpleError> {
     if let Expression::FunctionDeclaration { shape, loc, id, .. } = ex {
-      let shape = fill_shape(ex.shape().clone(), &ex.loc())?;
+      let shape = fill_shape(ex.shape(), &ex.loc())?;
 
       self.static_scope.insert(id.clone(), shape);
       Ok(())
@@ -259,20 +267,20 @@ impl Scope {
   }
 
   fn create_block_scope(&mut self) {
-    self.block_stack.push(vec![HashMap::new()]);
+    self.block_stack.last_mut().expect("Block Scope should never be empty!").push(HashMap::new());
   }
 
   fn destroy_block_scope(&mut self) {
-    self.block_stack.pop();
+    self.block_stack.last_mut().expect("Block Scope should never be empty!").pop();
   }
 
   fn create_function_scope(&mut self) {
-    self.create_block_scope();
+    self.block_stack.push(vec![HashMap::new()]);
     self.closures.push(Vec::new());
   }
 
   fn destroy_function_scope(&mut self) -> Vec<String> {
-    self.destroy_block_scope();
+    self.block_stack.pop();
     self.closures.pop()
       .expect("closures should never be empty!")
   }

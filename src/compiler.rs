@@ -112,8 +112,15 @@ impl Compiler {
           let (_, bit_func) = self.compile_function(context, ex)?;
           let const_id = context.add_function_ref(&full_id, shape.clone());
           context.functions.insert(full_id, Rc::new(bit_func));
-          let local = context.store(&id);
-          return Ok(vec![Instruction::LoadConst {kind: LoadType::Function, const_id}, Instruction::StoreValue { local }]);
+
+          let mut body = vec![Instruction::LoadConst {kind: LoadType::Function, const_id}];
+
+          if id != "<anon>" {
+            let local = context.store(&id);
+            body.push(Instruction::StoreValue { local });
+          }
+
+          return Ok(body);
         } else {
           let mut body = Vec::new();
 
@@ -137,10 +144,13 @@ impl Compiler {
           let (_, bit_func) = self.compile_function(context, ex)?;
           let func_id = context.add_function_ref(&full_id, shape.clone());
           context.functions.insert(full_id, Rc::new(bit_func));
-          let local = context.store(&id);
 
           body.push(Instruction::BuildClosure {param_count: closures.len() as LocalId, func_id});
-          body.push(Instruction::StoreValue { local });
+
+          if id != "<anon>" {
+            let local = context.store(&id);
+            body.push(Instruction::StoreValue { local });
+          }
 
           return Ok(body);
         }
