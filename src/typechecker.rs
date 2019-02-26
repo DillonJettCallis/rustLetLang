@@ -25,13 +25,13 @@ pub fn check_module(module: Module) -> Result<Module, SimpleError> {
 
   for ex in module.exports {
     let loc = ex.loc.clone();
-    let content = Box::new(check(&mut scope, *ex.content)?);
+    let content = Box::new(check(&mut scope, *ex.content, shape_unknown())?);
 
     exports.push(Export{content, loc});
   }
 
   for ex in module.locals {
-    let content = check(&mut scope, *ex)?;
+    let content = check(&mut scope, *ex, shape_unknown())?;
 
     locals.push(Box::new(content));
   }
@@ -40,13 +40,13 @@ pub fn check_module(module: Module) -> Result<Module, SimpleError> {
 }
 
 
-fn check(scope: &mut Scope, ex: Expression) -> Result<Expression, SimpleError> {
+fn check(scope: &mut Scope, ex: Expression, expected: Shape) -> Result<Expression, SimpleError> {
   match ex {
     Expression::FunctionDeclaration{shape: raw_shape, loc, id, args, body: raw_body, ..} => {
-      let (arg_shapes, result_shape) = verify_function_declaration(&raw_shape, &args, &loc)?;
+      let (arg_shapes, result_shape) = verify_function_declaration(raw_shape.clone(), expected, &args, &loc)?;
 
       if id != "<anon>" {
-        scope.set_scope(&id, &fill_shape(&raw_shape, &loc)?, &loc)?;
+        scope.set_scope(&id, &fill_shape(raw_shape, &loc)?, &loc)?;
       }
 
       scope.create_function_scope();
@@ -55,7 +55,7 @@ fn check(scope: &mut Scope, ex: Expression) -> Result<Expression, SimpleError> {
         scope.set_scope(arg_id, arg_shape, &loc)?;
       }
 
-      let body = check(scope, *raw_body)?;
+      let body = check(scope, *raw_body, result_shape.clone())?;
 
       let returned_shape = body.shape().clone();
 
@@ -75,8 +75,17 @@ fn check(scope: &mut Scope, ex: Expression) -> Result<Expression, SimpleError> {
       } else {
         scope.create_block_scope();
 
+        let mut index = 0usize;
+        let max = raw_body.len();
         for next in raw_body {
-          body.push(Box::new(check(scope, *next)?));
+          index = index + 1;
+          let expect = if max == index {
+            expected.clone()
+          } else {
+            shape_unknown()
+          };
+
+          body.push(Box::new(check(scope, *next, expect)?));
         }
         let shape = body.last().expect("This shouldn't be possible!").shape().clone();
 
@@ -86,7 +95,7 @@ fn check(scope: &mut Scope, ex: Expression) -> Result<Expression, SimpleError> {
       }
     }
     Expression::Assignment{shape: raw_shape, id, loc, body: raw_body} => {
-      let body = check(scope, *raw_body)?;
+      let body = check(scope, *raw_body, raw_shape.clone())?;
       let shape = verify(raw_shape, body.shape().clone(), &loc)?;
 
       scope.set_scope(&id, &shape, &loc)?;
@@ -94,8 +103,8 @@ fn check(scope: &mut Scope, ex: Expression) -> Result<Expression, SimpleError> {
       Ok(Expression::Assignment{shape, id, loc, body: Box::new(body)})
     }
     Expression::BinaryOp{shape: raw_shape, left: raw_left, right: raw_right, op, loc} => {
-      let left = check(scope, *raw_left)?;
-      let right = check(scope, *raw_right)?;
+      let left = check(scope, *raw_left, shape_unknown())?;
+      let right = check(scope, *raw_right, shape_unknown())?;
 
       if left.shape() == right.shape() {
         let shape = verify(raw_shape, left.shape().clone(), &loc)?;
@@ -105,22 +114,23 @@ fn check(scope: &mut Scope, ex: Expression) -> Result<Expression, SimpleError> {
       }
     },
     Expression::Call {shape: raw_shape, loc, func: raw_func, args: raw_args} => {
-      let func = check(scope, *raw_func)?;
-      let mut args = Vec::new();
-
-      for raw_arg in raw_args {
-        args.push(Box::new(check(scope, *raw_arg)?));
-      }
+      let func = check(scope, *raw_func, shape_unknown())?;
 
       if let Shape::SimpleFunctionShape {args: expected_args, result} = func.shape().clone() {
-        if args.len() != expected_args.len() {
+        if raw_args.len() != expected_args.len() {
           return loc.fail("Incorrect number of arguments")?;
         }
 
-        for index in 0..args.len() {
-          if args[index].shape() != &expected_args[index] {
+        let mut args = Vec::new();
+
+        for (expect, raw_arg) in expected_args.iter().zip(raw_args) {
+          let arg = check(scope, *raw_arg, expect.clone())?;
+
+          if arg.shape() != expect {
             return loc.fail("Invalid argument types for call")?;
           }
+
+          args.push(Box::new(arg));
         }
 
         Ok(Expression::Call {
@@ -143,7 +153,7 @@ fn check(scope: &mut Scope, ex: Expression) -> Result<Expression, SimpleError> {
   }
 }
 
-fn fill_shape(shape: &Shape, loc: &Location) -> Result<Shape, SimpleError> {
+fn fill_shape(shape: Shape, loc: &Location) -> Result<Shape, SimpleError> {
   match shape {
     Shape::SimpleFunctionShape { args: raw_args, result: raw_result } => {
       let mut args: Vec<Shape> = Vec::new();
@@ -152,7 +162,7 @@ fn fill_shape(shape: &Shape, loc: &Location) -> Result<Shape, SimpleError> {
         args.push(fill_shape(next_arg, loc)?);
       }
 
-      let result = Box::new(fill_shape(raw_result, loc)?);
+      let result = Box::new(fill_shape(*raw_result, loc)?);
 
       Ok(Shape::SimpleFunctionShape{args, result})
     }
@@ -166,33 +176,51 @@ fn fill_shape(shape: &Shape, loc: &Location) -> Result<Shape, SimpleError> {
       }
     },
     Shape::BaseShape{..} => Ok(shape.clone()),
-    _ => loc.fail("Unknown shape"),
+    Shape::UnknownShape => Ok(shape_unknown()),
   }
 }
 
 fn verify(defined: Shape, found: Shape, loc: &Location) -> Result<Shape, SimpleError> {
   if let Shape::UnknownShape = defined {
-    Ok(found)
-  } else {
-    let filled_defined = fill_shape(&defined, loc)?;
-
-    if filled_defined == found {
-      Ok(found)
+    if let Shape::UnknownShape = found {
+      loc.fail("Unknown shape")
     } else {
-      Err(SimpleError::new(format!("Incompatible types! Declared: {}, but found: {}, {}", filled_defined.pretty(), found.pretty(), loc.pretty())))
+      Ok(fill_shape(found, loc)?)
+    }
+  } else {
+    if let Shape::UnknownShape = found {
+      Ok(fill_shape(defined, loc)?)
+    } else {
+      let filled_defined = fill_shape(defined, loc)?;
+      let filled_found = fill_shape(found, loc)?;
+
+      if filled_defined == filled_found {
+        Ok(filled_found)
+      } else {
+        loc.fail(&format!("Incompatible types! Declared: {}, but found: {}", filled_defined.pretty(), filled_found.pretty()))
+      }
     }
   }
 }
 
-fn verify_function_declaration(defined: &Shape, arg_ids: &Vec<String>, loc: &Location) -> Result<(Vec<Shape>, Shape), SimpleError> {
+fn verify_function_declaration(defined: Shape, expected: Shape, arg_ids: &Vec<String>, loc: &Location) -> Result<(Vec<Shape>, Shape), SimpleError> {
+  let defined_error = defined.pretty();
+
   if let Shape::SimpleFunctionShape {args, result} = defined {
     if args.len() != arg_ids.len() {
-      Err(SimpleError::new( format!("Incompatible types! Function type has different number of parameters than named arguments. Type: {}, args found: {} {}", defined.pretty(), arg_ids.len(), loc.pretty())))
+      loc.fail( &format!("Incompatible types! Function type has different number of parameters than named arguments. Type: {}, args found: {}", defined_error, arg_ids.len()))
     } else {
+      let expected_args = if let Shape::SimpleFunctionShape{args: expected_args, ..} = expected {
+        expected_args.clone()
+      } else {
+        vec![shape_unknown(); args.len()]
+      };
+
       let mut filled_args = Vec::new();
 
-      for arg in args {
-        filled_args.push(fill_shape(arg, loc)?);
+      for (arg, expected_arg) in args.iter().zip(expected_args) {
+        let verified = verify(expected_arg, arg.clone(), &loc)?;
+        filled_args.push(verified);
       }
 
       Ok( (filled_args, *result.clone()) )
@@ -221,7 +249,7 @@ impl Scope {
 
   fn pre_fill_module_function(&mut self, ex: &Expression) -> Result<(), SimpleError> {
     if let Expression::FunctionDeclaration { shape, loc, id, .. } = ex {
-      let shape = fill_shape(ex.shape(), &ex.loc())?;
+      let shape = fill_shape(ex.shape().clone(), &ex.loc())?;
 
       self.static_scope.insert(id.clone(), shape);
       Ok(())

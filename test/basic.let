@@ -7,9 +7,7 @@ fun higher(op: {Float, Float -> Float}): Float = op(2, 4)
 export fun main(): Float = {
     let outside = 2;
 
-    let doOp: {Float, Float -> Float} = {a: Float, b: Float => a + b * outside};
-
-    let x = higher(doOp);
+    let x = higher({a, b -> Float => a + b * outside});
     x
 }
 

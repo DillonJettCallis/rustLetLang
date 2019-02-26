@@ -15,7 +15,7 @@ impl Location {
   }
 
   pub fn fail<T>(&self, message: &str) -> Result<T, SimpleError> {
-    Err(SimpleError::new(format!("{} {}" ,message, self.pretty())))
+    Err(SimpleError::new(format!("{} {}" , message, self.pretty())))
   }
 
   pub fn error(&self, message: &str) -> SimpleError {

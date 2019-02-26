@@ -120,13 +120,19 @@ impl Parser {
 
     if maybe_arrow.value != "->" && maybe_arrow.value != "=>" {
       args.push(self.expect_kind(TokenKind::Id)?.value);
-      self.expect_literal(":")?;
-      arg_types.push(self.parse_type()?);
+      if self.check_literal(":") {
+        arg_types.push(self.parse_type()?);
+      } else {
+        arg_types.push(shape_unknown());
+      }
 
       while self.check_literal(",") {
         args.push(self.expect_kind(TokenKind::Id)?.value);
-        self.expect_literal(":")?;
-        arg_types.push(self.parse_type()?);
+        if self.check_literal(":") {
+          arg_types.push(self.parse_type()?);
+        } else {
+          arg_types.push(shape_unknown());
+        }
       }
     }
 
