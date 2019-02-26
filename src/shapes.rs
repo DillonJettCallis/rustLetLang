@@ -22,7 +22,7 @@ impl Shape {
         let arg_names = args.iter().map(|a| a.pretty()).collect::<Vec<String>>().join(", ");
         let result_name = result.pretty();
 
-        format!("{{ {} => {} }}", arg_names, result_name)
+        format!("{{ {} -> {} }}", arg_names, result_name)
       }
       Shape::BaseShape{kind: BaseShapeKind::Float} => String::from("Float"),
       Shape::BaseShape{kind: BaseShapeKind::String} => String::from("String"),

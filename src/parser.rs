@@ -177,9 +177,15 @@ impl Parser {
 
     let loc = maybe_let.location.clone();
     let id = self.expect_kind(TokenKind::Id)?.value;
+
+    let shape = if self.check_literal(":") {
+      self.parse_type()?
+    } else {
+      shape_unknown()
+    };
+
     self.expect_literal("=")?;
     let body = self.parse_expression()?;
-    let shape = shape_unknown();
 
     let maybe_colon = self.peek();
 
