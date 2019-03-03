@@ -4,9 +4,17 @@ use std::rc::Rc;
 
 use simple_error::SimpleError;
 
+use ast::AssignmentEx;
+use ast::BinaryOpEx;
+use ast::BlockEx;
+use ast::CallEx;
 use ast::Expression;
+use ast::FunctionDeclarationEx;
 use ast::Location;
 use ast::Module;
+use ast::NumberLiteralEx;
+use ast::StringLiteralEx;
+use ast::VariableEx;
 use bytecode::AppDirectory;
 use bytecode::BitFunction;
 use bytecode::ConstantId;
@@ -38,27 +46,23 @@ impl Compiler {
 
 
     for export in &module.exports {
-      if let Expression::FunctionDeclaration {ref id, ref shape, ..} = *export.content {
-        context.add_function_ref(id, shape.clone());
-      }
+      context.add_function_ref( &export.content.id,  export.content.shape.clone());
     }
 
     for func in &module.locals {
-      if let Expression::FunctionDeclaration {ref id, ref shape, ..} = **func {
-        context.add_function_ref(id, shape.clone());
-      }
+      context.add_function_ref(&func.id, func.shape.clone());
     }
 
 
 
-    for export in module.exports {
+    for export in &module.exports {
       let (id, bit_func) = self.compile_function(&mut context, &export.content)?;
 
       context.functions.insert(id, Rc::new(bit_func));
     }
 
-    for func in module.locals {
-      let (id, bit_func) = self.compile_function(&mut context, &func)?;
+    for func in &module.locals {
+      let (id, bit_func) = self.compile_function(&mut context, func)?;
 
       context.functions.insert(id, Rc::new(bit_func));
     }
@@ -74,183 +78,224 @@ impl Compiler {
     })
   }
 
-  fn compile_function(&mut self, context: &mut ModuleContext, ex: &Expression) -> Result<(String, BitFunction), SimpleError> {
-    if let Expression::FunctionDeclaration { shape, loc, id, args, body, closures } = ex {
-      context.reset(args.len() as LocalId);
+  fn compile_function(&mut self, context: &mut ModuleContext, ex: &FunctionDeclarationEx) -> Result<(String, BitFunction), SimpleError> {
+    context.reset(ex.args.len() as LocalId);
 
-      for closure in closures {
-        context.store(closure);
-      }
-
-      for arg in args {
-        context.store(arg);
-      }
-
-      let mut body = self.compile_expression(context, body)?;
-
-      // if we don't end with a return, add one anyway.
-      if let Some(Instruction::Return) = body.last() {} else {
-        body.push(Instruction::Return);
-      }
-
-      return Ok((id.clone(), BitFunction {
-        max_locals: context.max_locals + 1,
-        shape: shape.clone(),
-        body,
-        source: vec![],
-      }));
+    for closure in &ex.closures {
+      context.store(closure);
     }
 
-    Err(SimpleError::new("Attempt to call compile_function with non-function expression"))
+    for arg in &ex.args {
+      context.store(&arg);
+    }
+
+    let mut body = self.compile_expression(context, &ex.body)?;
+
+    // if we don't end with a return, add one anyway.
+    if let Some(Instruction::Return) = body.last() {} else {
+      body.push(Instruction::Return);
+    }
+
+    return Ok((ex.id.clone(), BitFunction {
+      max_locals: context.max_locals + 1,
+      shape: ex.shape.clone(),
+      body,
+      source: vec![],
+    }));
   }
 
   fn compile_expression(&mut self, context: &mut ModuleContext, ex: &Expression) -> Result<Vec<Instruction>, SimpleError> {
     match ex {
-      Expression::FunctionDeclaration {shape, loc, id, args, body, closures} => {
-        if closures.is_empty() {
-          let full_id = format!("$closure:{}", context.gen_next_function_id());
-          let (_, bit_func) = self.compile_function(context, ex)?;
-          let const_id = context.add_function_ref(&full_id, shape.clone());
-          context.functions.insert(full_id, Rc::new(bit_func));
-
-          let mut body = vec![Instruction::LoadConst {kind: LoadType::Function, const_id}];
-
-          if id != "<anon>" {
-            let local = context.store(&id);
-            body.push(Instruction::StoreValue { local });
-          }
-
-          return Ok(body);
-        } else {
-          let mut body = Vec::new();
-
-          for local in closures {
-            let lookup = context.lookup(local, loc)?;
-
-            match lookup {
-              Lookup::Local(local) => {
-                body.push(Instruction::LoadValue { local })
-              }
-              Lookup::Static(const_id) => {
-                body.push(Instruction::LoadConst {
-                  kind: LoadType::Function,
-                  const_id,
-                })
-              }
-            }
-          }
-
-          let full_id = format!("$closure:{}", context.gen_next_function_id());
-          let (_, bit_func) = self.compile_function(context, ex)?;
-          let func_id = context.add_function_ref(&full_id, shape.clone());
-          context.functions.insert(full_id, Rc::new(bit_func));
-
-          body.push(Instruction::BuildClosure {param_count: closures.len() as LocalId, func_id});
-
-          if id != "<anon>" {
-            let local = context.store(&id);
-            body.push(Instruction::StoreValue { local });
-          }
-
-          return Ok(body);
-        }
-      },
-      Expression::Assignment { shape, loc, id, body } => {
-        let mut assign = self.compile_expression(context, body)?;
-        let local = context.store(id);
-        assign.push(Instruction::StoreValue { local });
-        return Ok(assign);
-      }
-      Expression::Variable { shape, loc, id } => {
-        let lookup = context.lookup(id, loc)?;
-
-        match lookup {
-          Lookup::Local(local) => {
-            Ok(vec![Instruction::LoadValue { local }])
-          }
-          Lookup::Static(const_id) => {
-            Ok(vec![Instruction::LoadConst {
-              kind: LoadType::Function,
-              const_id,
-            }])
-          }
-        }
-      }
-      Expression::BinaryOp { shape, loc, op, left, right } => {
-        let mut body = self.compile_expression(context, left)?;
-        let mut other = self.compile_expression(context, right)?;
-        body.append(&mut other);
-
-        let id = format!("Core.{}", op);
-        if let Lookup::Static(func_id) = context.lookup(&id, loc)? {
-          body.push(Instruction::CallStatic { func_id });
-          return Ok(body);
-        } else {
-          return Err(SimpleError::new(format!("Could not look up Core operator function {}", op)));
-        }
-      }
-      Expression::Call { shape, loc, func, args } => {
-        let mut body = Vec::new();
-
-        if let Expression::Variable { ref id, .. } = **func {
-          if let Lookup::Static(func_id) = context.lookup(id, loc)? {
-            for arg in args {
-              let mut more = self.compile_expression(context, arg)?;
-              body.append(&mut more);
-            }
-
-            body.push(Instruction::CallStatic { func_id });
-            return Ok(body);
-          }
-        }
-
-        let mut function = self.compile_expression(context, func)?;
-        body.append(&mut function);
-
-        for arg in args {
-          let mut more = self.compile_expression(context, arg)?;
-          body.append(&mut more);
-        }
-
-        let func_shape = func.shape();
-
-        let shape_id = self.shape_refs.iter().position(|other| other == func_shape)
-          .or_else(move || {
-            self.shape_refs.push(func_shape.clone());
-            Some(self.shape_refs.len() - 1)
-          }).unwrap() as u32;
-
-        body.push(Instruction::CallDynamic { shape_id });
-        Ok(body)
-      }
-      Expression::Block { shape, loc, body } => {
-        context.push_scope();
-        let mut content: Vec<Instruction> = Vec::new();
-
-        for next in body {
-          let mut next_content = self.compile_expression(context, next)?;
-          content.append(&mut next_content);
-        }
-
-        if content.is_empty() {
-          // If the block is empty, return a Null so there is something there.
-          content.push(Instruction::LoadConstNull)
-        }
-
-        context.pop_scope();
-        return Ok(content);
-      }
-      Expression::StringLiteral { shape, loc, value } => {
-        let const_id = context.string_constant(value);
-
-        return Ok(vec![Instruction::LoadConst { kind: LoadType::String, const_id }]);
-      }
-      Expression::NumberLiteral { shape, loc, value } => {
-        return Ok(vec![Instruction::LoadConstFloat { value: value.clone() }]);
-      }
+      Expression::FunctionDeclaration(ex) => ex.compile(self, context),
+      Expression::Assignment(ex) => ex.compile(self, context),
+      Expression::Variable(ex) => ex.compile(self, context),
+      Expression::BinaryOp(ex) => ex.compile(self, context),
+      Expression::Call(ex) => ex.compile(self, context),
+      Expression::Block(ex) => ex.compile(self, context),
+      Expression::StringLiteral(ex) => ex.compile(self, context),
+      Expression::NumberLiteral(ex) => ex.compile(self, context),
 
       _ => unimplemented!()
     }
+  }
+}
+
+trait Compilable {
+
+  fn compile(&self, compiler: &mut Compiler, context: &mut ModuleContext) -> Result<Vec<Instruction>, SimpleError>;
+
+}
+
+impl Compilable for FunctionDeclarationEx {
+  fn compile(&self, compiler: &mut Compiler, context: &mut ModuleContext) -> Result<Vec<Instruction>, SimpleError> {
+    let FunctionDeclarationEx{shape, loc, id, args, body, closures} = self;
+    if closures.is_empty() {
+      let full_id = format!("$closure:{}", context.gen_next_function_id());
+      let (_, bit_func) = compiler.compile_function(context, self)?;
+      let const_id = context.add_function_ref(&full_id, shape.clone());
+      context.functions.insert(full_id, Rc::new(bit_func));
+
+      let mut body = vec![Instruction::LoadConst {kind: LoadType::Function, const_id}];
+
+      if id != "<anon>" {
+        let local = context.store(&id);
+        body.push(Instruction::StoreValue { local });
+      }
+
+      return Ok(body);
+    } else {
+      let mut body = Vec::new();
+
+      for local in closures {
+        let lookup = context.lookup(local, loc)?;
+
+        match lookup {
+          Lookup::Local(local) => {
+            body.push(Instruction::LoadValue { local })
+          }
+          Lookup::Static(const_id) => {
+            body.push(Instruction::LoadConst {
+              kind: LoadType::Function,
+              const_id,
+            })
+          }
+        }
+      }
+
+      let full_id = format!("$closure:{}", context.gen_next_function_id());
+      let (_, bit_func) = compiler.compile_function(context, self)?;
+      let func_id = context.add_function_ref(&full_id, shape.clone());
+      context.functions.insert(full_id, Rc::new(bit_func));
+
+      body.push(Instruction::BuildClosure {param_count: closures.len() as LocalId, func_id});
+
+      if id != "<anon>" {
+        let local = context.store(&id);
+        body.push(Instruction::StoreValue { local });
+      }
+
+      return Ok(body);
+    }
+  }
+}
+
+impl Compilable for AssignmentEx {
+  fn compile(&self, compiler: &mut Compiler, context: &mut ModuleContext) -> Result<Vec<Instruction>, SimpleError> {
+    let AssignmentEx{ shape, loc, id, body } = self;
+    let mut assign = compiler.compile_expression(context, body)?;
+    let local = context.store(id);
+    assign.push(Instruction::StoreValue { local });
+    return Ok(assign);
+  }
+}
+
+impl Compilable for VariableEx {
+  fn compile(&self, compiler: &mut Compiler, context: &mut ModuleContext) -> Result<Vec<Instruction>, SimpleError> {
+    let VariableEx{ shape, loc, id } = self;
+    let lookup = context.lookup(id, loc)?;
+
+    match lookup {
+      Lookup::Local(local) => {
+        Ok(vec![Instruction::LoadValue { local }])
+      }
+      Lookup::Static(const_id) => {
+        Ok(vec![Instruction::LoadConst {
+          kind: LoadType::Function,
+          const_id,
+        }])
+      }
+    }
+  }
+}
+
+impl Compilable for BinaryOpEx {
+  fn compile(&self, compiler: &mut Compiler, context: &mut ModuleContext) -> Result<Vec<Instruction>, SimpleError> {
+    let BinaryOpEx{ shape, loc, op, left, right } = self;
+    let mut body = compiler.compile_expression(context, left)?;
+    let mut other = compiler.compile_expression(context, right)?;
+    body.append(&mut other);
+
+    let id = format!("Core.{}", op);
+    if let Lookup::Static(func_id) = context.lookup(&id, loc)? {
+      body.push(Instruction::CallStatic { func_id });
+      return Ok(body);
+    } else {
+      return Err(SimpleError::new(format!("Could not look up Core operator function {}", op)));
+    }
+  }
+}
+
+impl Compilable for CallEx {
+  fn compile(&self, compiler: &mut Compiler, context: &mut ModuleContext) -> Result<Vec<Instruction>, SimpleError> {
+    let CallEx{ shape, loc, func, args } = self;
+    let mut body = Vec::new();
+
+    if let Expression::Variable(var) = func {
+      if let Lookup::Static(func_id) = context.lookup(&var.id, loc)? {
+        for arg in args {
+          let mut more = compiler.compile_expression(context, arg)?;
+          body.append(&mut more);
+        }
+
+        body.push(Instruction::CallStatic { func_id });
+        return Ok(body);
+      }
+    }
+
+    let mut function = compiler.compile_expression(context, func)?;
+    body.append(&mut function);
+
+    for arg in args {
+      let mut more = compiler.compile_expression(context, arg)?;
+      body.append(&mut more);
+    }
+
+    let func_shape = func.shape();
+
+    let shape_id = compiler.shape_refs.iter().position(|other| other == func_shape)
+      .or_else(move || {
+        compiler.shape_refs.push(func_shape.clone());
+        Some(compiler.shape_refs.len() - 1)
+      }).unwrap() as u32;
+
+    body.push(Instruction::CallDynamic { shape_id });
+    Ok(body)
+  }
+}
+
+impl Compilable for BlockEx {
+  fn compile(&self, compiler: &mut Compiler, context: &mut ModuleContext) -> Result<Vec<Instruction>, SimpleError> {
+    let BlockEx{ shape, loc, body } = self;
+    context.push_scope();
+    let mut content: Vec<Instruction> = Vec::new();
+
+    for next in body {
+      let mut next_content = compiler.compile_expression(context, next)?;
+      content.append(&mut next_content);
+    }
+
+    if content.is_empty() {
+      // If the block is empty, return a Null so there is something there.
+      content.push(Instruction::LoadConstNull)
+    }
+
+    context.pop_scope();
+    Ok(content)
+  }
+}
+
+impl Compilable for StringLiteralEx {
+  fn compile(&self, compiler: &mut Compiler, context: &mut ModuleContext) -> Result<Vec<Instruction>, SimpleError> {
+    let StringLiteralEx{ shape, loc, value } = self;
+    let const_id = context.string_constant(value);
+
+    Ok(vec![Instruction::LoadConst { kind: LoadType::String, const_id }])
+  }
+}
+
+impl Compilable for NumberLiteralEx {
+  fn compile(&self, compiler: &mut Compiler, context: &mut ModuleContext) -> Result<Vec<Instruction>, SimpleError> {
+    Ok(vec![Instruction::LoadConstFloat { value: self.value.clone() }])
   }
 }
 

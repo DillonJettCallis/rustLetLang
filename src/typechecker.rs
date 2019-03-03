@@ -5,151 +5,203 @@ use simple_error::*;
 use ast::*;
 use shapes::*;
 
-// min error
-// Err(SimpleError::new(""))
-
 pub fn check_module(module: Module) -> Result<Module, SimpleError> {
-  let mut exports: Vec<Export> = Vec::new();
-  let mut locals: Vec<Box<Expression>> = Vec::new();
+  let mut exports = Vec::new();
+  let mut locals = Vec::new();
 
   let mut scope = Scope::new();
   scope.create_function_scope();
 
-  for ref ex in &module.exports {
+  for ex in &module.exports {
     scope.pre_fill_module_function(&ex.content)?;
   }
 
-  for ref ex in &module.locals {
-    scope.pre_fill_module_function(&ex)?;
+  for ex in &module.locals {
+    scope.pre_fill_module_function(ex)?;
   }
 
   for ex in module.exports {
     let loc = ex.loc.clone();
-    let content = Box::new(check(&mut scope, *ex.content, shape_unknown())?);
-
-    exports.push(Export{content, loc});
+    if let Expression::FunctionDeclaration(content) = ex.content.check(&mut scope, shape_unknown())? {
+      exports.push(Export { content: *content, loc });
+    } else {
+      return Err(SimpleError::new("FunctionDeclaration didn't return itself!"))
+    }
   }
 
   for ex in module.locals {
-    let content = check(&mut scope, *ex, shape_unknown())?;
-
-    locals.push(Box::new(content));
+    if let Expression::FunctionDeclaration(content) = ex.check(&mut scope, shape_unknown())? {
+      locals.push(*content);
+    } else {
+      return Err(SimpleError::new("FunctionDeclaration didn't return itself!"))
+    }
   }
 
   Ok(Module{exports, locals})
 }
 
+trait Typed {
+
+  fn check(self, scope: &mut Scope, expected: Shape) -> Result<Expression, SimpleError>;
+
+}
+
+impl Typed for FunctionDeclarationEx {
+
+  fn check(self, scope: &mut Scope, expected: Shape) -> Result<Expression, SimpleError> {
+    let FunctionDeclarationEx{shape: raw_shape, loc, id, args, body: raw_body, ..} = self;
+
+    let (arg_shapes, result_shape) = verify_function_declaration(raw_shape.clone(), expected, &args, &loc)?;
+
+    if id != "<anon>" {
+      scope.set_scope(&id, &fill_shape(raw_shape, &loc)?, &loc)?;
+    }
+
+    scope.create_function_scope();
+
+    for (arg_id, arg_shape) in args.iter().zip(arg_shapes.iter()) {
+      scope.set_scope(arg_id, arg_shape, &loc)?;
+    }
+
+    let body = check(scope, raw_body, result_shape.clone())?;
+
+    let returned_shape = body.shape().clone();
+
+    let final_result_shape = verify(result_shape, returned_shape, &loc)?;
+
+    let closures = scope.destroy_function_scope();
+
+    let shape = Shape::SimpleFunctionShape {args: arg_shapes, result: Box::new(final_result_shape)};
+
+    Ok(FunctionDeclarationEx{shape, body, id, args, loc, closures}.wrap())
+  }
+
+}
+
+impl Typed for BlockEx {
+
+  fn check(self, scope: &mut Scope, expected: Shape) -> Result<Expression, SimpleError> {
+    let BlockEx{shape: raw_shape, loc, body: raw_body} = self;
+    let mut body = Vec::with_capacity(raw_body.len());
+
+    if raw_body.len() == 0 {
+      Ok(BlockEx{shape: shape_unit(), loc, body}.wrap())
+    } else {
+      scope.create_block_scope();
+
+      let mut index = 0usize;
+      let max = raw_body.len();
+      for next in raw_body {
+        index = index + 1;
+        let expect = if max == index {
+          expected.clone()
+        } else {
+          shape_unknown()
+        };
+
+        body.push(check(scope, next, expect)?);
+      }
+      let shape = body.last().expect("This shouldn't be possible!").shape().clone();
+
+      scope.destroy_block_scope();
+
+      Ok(BlockEx{shape, loc, body}.wrap())
+    }
+  }
+}
+
+impl Typed for AssignmentEx {
+  fn check(self, scope: &mut Scope, expected: Shape) -> Result<Expression, SimpleError> {
+    let AssignmentEx{shape: raw_shape, id, loc, body: raw_body} = self;
+    let body = check(scope, raw_body, raw_shape.clone())?;
+    let shape = verify(raw_shape, body.shape().clone(), &loc)?;
+
+    scope.set_scope(&id, &shape, &loc)?;
+
+    Ok(AssignmentEx{shape, id, loc, body}.wrap())
+  }
+}
+
+impl Typed for BinaryOpEx {
+  fn check(self, scope: &mut Scope, expected: Shape) -> Result<Expression, SimpleError> {
+    let BinaryOpEx{shape: raw_shape, left: raw_left, right: raw_right, op, loc} = self;
+    let left = check(scope, raw_left, shape_unknown())?;
+    let right = check(scope, raw_right, shape_unknown())?;
+
+    if left.shape() == right.shape() {
+      let shape = verify(raw_shape, left.shape().clone(), &loc)?;
+      Ok(BinaryOpEx{shape, left, right, op, loc}.wrap())
+    } else {
+      Err(SimpleError::new(format!("Incompatible types! Cannot perform operation '{}' on distinct types '{}' and '{}' {}", op, left.shape().pretty(), right.shape().pretty(), loc.pretty())))
+    }
+  }
+}
+
+impl Typed for CallEx {
+  fn check(self, scope: &mut Scope, expected: Shape) -> Result<Expression, SimpleError> {
+    let CallEx{shape: raw_shape, loc, func: raw_func, args: raw_args} = self;
+    let func = check(scope, raw_func, shape_unknown())?;
+
+    if let Shape::SimpleFunctionShape {args: expected_args, result} = func.shape().clone() {
+      if raw_args.len() != expected_args.len() {
+        return loc.fail("Incorrect number of arguments")?;
+      }
+
+      let mut args = Vec::new();
+
+      for (expect, raw_arg) in expected_args.iter().zip(raw_args) {
+        let arg = check(scope, raw_arg, expect.clone())?;
+
+        if arg.shape() != expect {
+          return loc.fail("Invalid argument types for call")?;
+        }
+
+        args.push(arg);
+      }
+
+      Ok(CallEx {
+        shape: *result,
+        loc,
+        func,
+        args
+      }.wrap())
+    } else {
+      return loc.fail("Attempt to call non-function");
+    }
+  }
+}
+
+impl Typed for VariableEx {
+  fn check(self, scope: &mut Scope, expected: Shape) -> Result<Expression, SimpleError> {
+    let VariableEx{shape: raw_shape, loc, id} = self;
+    let shape = scope.check_scope(&id, &loc)?;
+
+    Ok(VariableEx {shape, loc, id}.wrap())
+  }
+}
+
+impl Typed for StringLiteralEx {
+  fn check(self, scope: &mut Scope, expected: Shape) -> Result<Expression, SimpleError> {
+    Ok(self.wrap())
+  }
+}
+
+impl Typed for NumberLiteralEx {
+  fn check(self, scope: &mut Scope, expected: Shape) -> Result<Expression, SimpleError> {
+    Ok(self.wrap())
+  }
+}
 
 fn check(scope: &mut Scope, ex: Expression, expected: Shape) -> Result<Expression, SimpleError> {
   match ex {
-    Expression::FunctionDeclaration{shape: raw_shape, loc, id, args, body: raw_body, ..} => {
-      let (arg_shapes, result_shape) = verify_function_declaration(raw_shape.clone(), expected, &args, &loc)?;
-
-      if id != "<anon>" {
-        scope.set_scope(&id, &fill_shape(raw_shape, &loc)?, &loc)?;
-      }
-
-      scope.create_function_scope();
-
-      for (arg_id, arg_shape) in args.iter().zip(arg_shapes.iter()) {
-        scope.set_scope(arg_id, arg_shape, &loc)?;
-      }
-
-      let body = check(scope, *raw_body, result_shape.clone())?;
-
-      let returned_shape = body.shape().clone();
-
-      let final_result_shape = verify(result_shape, returned_shape, &loc)?;
-
-      let closures = scope.destroy_function_scope();
-
-      let shape = Shape::SimpleFunctionShape {args: arg_shapes, result: Box::new(final_result_shape)};
-
-      Ok(Expression::FunctionDeclaration{shape, body: Box::new(body), id, args, loc, closures})
-    }
-    Expression::Block{shape: raw_shape, loc, body: raw_body} => {
-      let mut body: Vec<Box<Expression>> = Vec::with_capacity(raw_body.len());
-
-      if raw_body.len() == 0 {
-        Ok(Expression::Block{shape: shape_unit(), loc, body})
-      } else {
-        scope.create_block_scope();
-
-        let mut index = 0usize;
-        let max = raw_body.len();
-        for next in raw_body {
-          index = index + 1;
-          let expect = if max == index {
-            expected.clone()
-          } else {
-            shape_unknown()
-          };
-
-          body.push(Box::new(check(scope, *next, expect)?));
-        }
-        let shape = body.last().expect("This shouldn't be possible!").shape().clone();
-
-        scope.destroy_block_scope();
-
-        Ok(Expression::Block{shape, loc, body})
-      }
-    }
-    Expression::Assignment{shape: raw_shape, id, loc, body: raw_body} => {
-      let body = check(scope, *raw_body, raw_shape.clone())?;
-      let shape = verify(raw_shape, body.shape().clone(), &loc)?;
-
-      scope.set_scope(&id, &shape, &loc)?;
-
-      Ok(Expression::Assignment{shape, id, loc, body: Box::new(body)})
-    }
-    Expression::BinaryOp{shape: raw_shape, left: raw_left, right: raw_right, op, loc} => {
-      let left = check(scope, *raw_left, shape_unknown())?;
-      let right = check(scope, *raw_right, shape_unknown())?;
-
-      if left.shape() == right.shape() {
-        let shape = verify(raw_shape, left.shape().clone(), &loc)?;
-        Ok(Expression::BinaryOp{shape, left: Box::new(left), right: Box::new(right), op, loc})
-      } else {
-        Err(SimpleError::new(format!("Incompatible types! Cannot perform operation '{}' on distinct types '{}' and '{}' {}", op, left.shape().pretty(), right.shape().pretty(), loc.pretty())))
-      }
-    },
-    Expression::Call {shape: raw_shape, loc, func: raw_func, args: raw_args} => {
-      let func = check(scope, *raw_func, shape_unknown())?;
-
-      if let Shape::SimpleFunctionShape {args: expected_args, result} = func.shape().clone() {
-        if raw_args.len() != expected_args.len() {
-          return loc.fail("Incorrect number of arguments")?;
-        }
-
-        let mut args = Vec::new();
-
-        for (expect, raw_arg) in expected_args.iter().zip(raw_args) {
-          let arg = check(scope, *raw_arg, expect.clone())?;
-
-          if arg.shape() != expect {
-            return loc.fail("Invalid argument types for call")?;
-          }
-
-          args.push(Box::new(arg));
-        }
-
-        Ok(Expression::Call {
-          shape: *result,
-          loc,
-          func: Box::new(func),
-          args
-        })
-      } else {
-        return loc.fail("Attempt to call non-function");
-      }
-    },
-    Expression::Variable{shape: raw_shape, loc, id} => {
-      let shape = scope.check_scope(&id, &loc)?;
-
-      Ok(Expression::Variable {shape, loc, id})
-    }
-    Expression::StringLiteral{..} => Ok(ex),
-    Expression::NumberLiteral{..} => Ok(ex)
+    Expression::FunctionDeclaration(ex) => ex.check(scope, expected),
+    Expression::Block(ex) => ex.check(scope, expected),
+    Expression::Assignment(ex) => ex.check(scope, expected),
+    Expression::BinaryOp(ex) => ex.check(scope, expected),
+    Expression::Call(ex) => ex.check(scope, expected),
+    Expression::Variable(ex) => ex.check(scope, expected),
+    Expression::StringLiteral(ex) => ex.check(scope, expected),
+    Expression::NumberLiteral(ex) => ex.check(scope, expected),
   }
 }
 
@@ -247,15 +299,11 @@ impl Scope {
     }
   }
 
-  fn pre_fill_module_function(&mut self, ex: &Expression) -> Result<(), SimpleError> {
-    if let Expression::FunctionDeclaration { shape, loc, id, .. } = ex {
-      let shape = fill_shape(ex.shape().clone(), &ex.loc())?;
+  fn pre_fill_module_function(&mut self, func: &FunctionDeclarationEx) -> Result<(), SimpleError> {
+    let shape = fill_shape(func.shape.clone(), &func.loc)?;
 
-      self.static_scope.insert(id.clone(), shape);
-      Ok(())
-    } else {
-      Err(SimpleError::new(format!("Invalid function declaration: {}", ex.loc().pretty())))
-    }
+    self.static_scope.insert(func.id.clone(), shape);
+    Ok(())
   }
 
   fn set_scope(&mut self, id: &String, shape: &Shape, loc: &Location) -> Result<(), SimpleError> {

@@ -42,8 +42,8 @@ struct Parser {
 
 impl Parser {
   fn parse_module(&mut self) -> Result<Module, SimpleError> {
-    let mut exports: Vec<Export> = Vec::new();
-    let mut locals: Vec<Box<Expression>> = Vec::new();
+    let mut exports = Vec::new();
+    let mut locals = Vec::new();
 
     loop {
       let token = self.peek();
@@ -68,7 +68,7 @@ impl Parser {
     }
   }
 
-  fn parse_function(&mut self) -> Result<Box<Expression>, SimpleError> {
+  fn parse_function(&mut self) -> Result<FunctionDeclarationEx, SimpleError> {
     // Assume fun is already parsed
 
     let fun = self.next();
@@ -106,10 +106,10 @@ impl Parser {
 
     let shape = Shape::SimpleFunctionShape{ args: arg_types, result: Box::new(result_type)};
 
-    Ok(Box::new(Expression::FunctionDeclaration { shape, loc, id, args, body, closures: Vec::new() }))
+    Ok(FunctionDeclarationEx{ shape, loc, id, args, body, closures: Vec::new() })
   }
 
-  fn parse_lambda(&mut self) -> Result<Box<Expression>, SimpleError> {
+  fn parse_lambda(&mut self) -> Result<Expression, SimpleError> {
     // assume we've already checked and confirmed this is a lambda.
 
     let loc = self.peek_back().location;
@@ -144,38 +144,38 @@ impl Parser {
 
     let block_loc = self.expect_literal("=>")?.location;
 
-    let mut body: Vec<Box<Expression>> = Vec::new();
+    let mut body = Vec::new();
 
     while !self.check_literal("}") {
       body.push(self.parse_statement()?)
     }
 
-    let block = Box::new(Expression::Block {
+    let block = Expression::Block (Box::new(BlockEx{
       loc: block_loc,
       shape: shape_unknown(),
       body
-    });
+    }));
 
     let shape = Shape::SimpleFunctionShape{ args: arg_types, result: Box::new(result_type)};
 
-    Ok(Box::new(Expression::FunctionDeclaration { shape, loc, id: "<anon>".to_string(), args, body: block, closures: Vec::new() }))
+    Ok(FunctionDeclarationEx { shape, loc, id: "<anon>".to_string(), args, body: block, closures: Vec::new() }.wrap())
   }
 
-  fn parse_statement(&mut self) -> Result<Box<Expression>, SimpleError> {
+  fn parse_statement(&mut self) -> Result<Expression, SimpleError> {
     let maybe_key = self.peek();
 
     match maybe_key.value.as_ref() {
       "let" => self.parse_assignment(),
-      "fun" => self.parse_function(),
+      "fun" => Ok(self.parse_function()?.wrap()),
       _ => self.parse_expression()
     }
   }
 
-  fn parse_expression(&mut self) -> Result<Box<Expression>, SimpleError> {
+  fn parse_expression(&mut self) -> Result<Expression, SimpleError> {
     self.parse_ops()
   }
 
-  fn parse_assignment(&mut self) -> Result<Box<Expression>, SimpleError> {
+  fn parse_assignment(&mut self) -> Result<Expression, SimpleError> {
     // Assume let is already parsed
 
     let maybe_let = self.next();
@@ -199,10 +199,10 @@ impl Parser {
       self.skip()
     }
 
-    Ok(Box::new(Expression::Assignment { shape, loc, id, body }))
+    Ok(AssignmentEx { shape, loc, id, body }.wrap())
   }
 
-  fn parse_ops(&mut self) -> Result<Box<Expression>, SimpleError> {
+  fn parse_ops(&mut self) -> Result<Expression, SimpleError> {
     let start = |me: &mut Parser| me.parse_call();
     let prod = |me: &mut Parser| me.parse_binary_op(PROD_OPS, start);
     let sum = |me: &mut Parser| me.parse_binary_op(SUM_OPS, prod);
@@ -212,7 +212,7 @@ impl Parser {
     equal(self)
   }
 
-  fn parse_binary_op<Next: Fn(&mut Parser) -> Result<Box<Expression>, SimpleError>>(&mut self, ops: &[&str], next: Next) -> Result<Box<Expression>, SimpleError> {
+  fn parse_binary_op<Next: Fn(&mut Parser) -> Result<Expression, SimpleError>>(&mut self, ops: &[&str], next: Next) -> Result<Expression, SimpleError> {
     let mut left = next(self)?;
 
     let mut maybe_op = self.peek();
@@ -224,14 +224,14 @@ impl Parser {
       let shape = shape_unknown();
       let right = next(self)?;
 
-      left = Box::new(Expression::BinaryOp { shape, loc, left, right, op });
+      left = BinaryOpEx { shape, loc, left, right, op }.wrap();
       maybe_op = self.peek();
     }
 
     Ok(left)
   }
 
-  fn parse_call(&mut self) -> Result<Box<Expression>, SimpleError> {
+  fn parse_call(&mut self) -> Result<Expression, SimpleError> {
     let func = self.parse_block()?;
 
     if self.check_literal("(") {
@@ -247,18 +247,18 @@ impl Parser {
         self.expect_literal(")")?;
       }
 
-      return Ok(Box::new(Expression::Call {
+      return Ok(CallEx {
         shape: shape_unknown(),
         loc: func.loc().clone(),
         func,
         args
-      }))
+      }.wrap())
     } else {
       return Ok(func);
     }
   }
 
-  fn parse_block(&mut self) -> Result<Box<Expression>, SimpleError> {
+  fn parse_block(&mut self) -> Result<Expression, SimpleError> {
     if self.check_literal("{") {
       if self.check_is_lambda() {
         return self.parse_lambda();
@@ -266,7 +266,7 @@ impl Parser {
 
       let loc = self.peek_back().location;
       let shape = shape_unknown();
-      let mut body: Vec<Box<Expression>> = Vec::new();
+      let mut body= Vec::new();
 
       while "}" != self.peek().value {
         body.push(self.parse_statement()?)
@@ -274,13 +274,13 @@ impl Parser {
       // Skip '}'
       self.skip();
 
-      Ok(Box::new(Expression::Block { loc, shape, body }))
+      Ok(BlockEx { loc, shape, body }.wrap())
     } else {
       self.parse_term()
     }
   }
 
-  fn parse_term(&mut self) -> Result<Box<Expression>, SimpleError> {
+  fn parse_term(&mut self) -> Result<Expression, SimpleError> {
     let term = self.next();
     let loc = term.location.clone();
 
@@ -288,23 +288,23 @@ impl Parser {
       Token { kind: TokenKind::Id, .. } => {
         let id = term.value;
         let shape = shape_unknown();
-        Expression::Variable { id, shape, loc }
+        VariableEx { id, shape, loc }.wrap()
       }
       Token { kind: TokenKind::String, .. } => {
         let value = term.value;
         let shape = shape_string();
-        Expression::StringLiteral { shape, loc, value }
+        StringLiteralEx { shape, loc, value }.wrap()
       }
       Token { kind: TokenKind::Number, .. } => {
         let value = term.value.parse().or_else(|_| Err(SimpleError::new("Invalid float literal")))?;
         let shape = shape_float();
-        Expression::NumberLiteral { shape, loc, value }
+        NumberLiteralEx { shape, loc, value }.wrap()
       }
       Token { kind: TokenKind::EOF, .. } => return Err(SimpleError::new("Unexpected <EOF>")),
       _ => return Err(SimpleError::new(format!("Unexpected Token: {:?}", term)))
     };
 
-    Ok(Box::new(raw))
+    Ok(raw)
   }
 
   fn parse_type(&mut self) -> Result<Shape, SimpleError> {
