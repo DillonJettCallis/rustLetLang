@@ -49,31 +49,27 @@ trait Typed {
 impl Typed for FunctionDeclarationEx {
 
   fn check(self, scope: &mut Scope, expected: Shape) -> Result<Expression, SimpleError> {
-    let FunctionDeclarationEx{shape: raw_shape, loc, id, args, body: raw_body, ..} = self;
+    let args = verify_function_declaration(self.args.clone(), expected, &self.loc)?;
 
-    let (arg_shapes, result_shape) = verify_function_declaration(raw_shape.clone(), expected, &args, &loc)?;
-
-    if id != "<anon>" {
-      scope.set_scope(&id, &fill_shape(raw_shape, &loc)?, &loc)?;
+    if !self.context.is_lambda {
+      scope.set_scope(&self.id, &fill_shape(self.shape(), &self.loc)?, &self.loc)?;
     }
 
     scope.create_function_scope();
 
-    for (arg_id, arg_shape) in args.iter().zip(arg_shapes.iter()) {
-      scope.set_scope(arg_id, arg_shape, &loc)?;
+    for Parameter{id, shape} in &args {
+      scope.set_scope(id, shape, &self.loc)?;
     }
 
-    let body = check(scope, raw_body, result_shape.clone())?;
+    let body = check(scope, self.body, self.result.clone())?;
 
-    let returned_shape = body.shape().clone();
+    let returned_shape = body.shape();
 
-    let final_result_shape = verify(result_shape, returned_shape, &loc)?;
+    let result = verify(self.result, returned_shape, &self.loc)?;
 
     let closures = scope.destroy_function_scope();
 
-    let shape = Shape::SimpleFunctionShape {args: arg_shapes, result: Box::new(final_result_shape)};
-
-    Ok(FunctionDeclarationEx{shape, body, id, args, loc, closures}.wrap())
+    Ok(FunctionDeclarationEx{result, body, id: self.id, args, loc: self.loc, context: self.context.set_closures(closures)}.wrap())
   }
 
 }
@@ -101,7 +97,7 @@ impl Typed for BlockEx {
 
         body.push(check(scope, next, expect)?);
       }
-      let shape = body.last().expect("This shouldn't be possible!").shape().clone();
+      let shape = body.last().expect("This shouldn't be possible!").shape();
 
       scope.destroy_block_scope();
 
@@ -114,7 +110,7 @@ impl Typed for AssignmentEx {
   fn check(self, scope: &mut Scope, expected: Shape) -> Result<Expression, SimpleError> {
     let AssignmentEx{shape: raw_shape, id, loc, body: raw_body} = self;
     let body = check(scope, raw_body, raw_shape.clone())?;
-    let shape = verify(raw_shape, body.shape().clone(), &loc)?;
+    let shape = verify(raw_shape, body.shape(), &loc)?;
 
     scope.set_scope(&id, &shape, &loc)?;
 
@@ -129,7 +125,7 @@ impl Typed for BinaryOpEx {
     let right = check(scope, raw_right, shape_unknown())?;
 
     if left.shape() == right.shape() {
-      let shape = verify(raw_shape, left.shape().clone(), &loc)?;
+      let shape = verify(raw_shape, left.shape(), &loc)?;
       Ok(BinaryOpEx{shape, left, right, op, loc}.wrap())
     } else {
       Err(SimpleError::new(format!("Incompatible types! Cannot perform operation '{}' on distinct types '{}' and '{}' {}", op, left.shape().pretty(), right.shape().pretty(), loc.pretty())))
@@ -142,7 +138,7 @@ impl Typed for CallEx {
     let CallEx{shape: raw_shape, loc, func: raw_func, args: raw_args} = self;
     let func = check(scope, raw_func, shape_unknown())?;
 
-    if let Shape::SimpleFunctionShape {args: expected_args, result} = func.shape().clone() {
+    if let Shape::SimpleFunctionShape {args: expected_args, result} = func.shape() {
       if raw_args.len() != expected_args.len() {
         return loc.fail("Incorrect number of arguments")?;
       }
@@ -152,7 +148,7 @@ impl Typed for CallEx {
       for (expect, raw_arg) in expected_args.iter().zip(raw_args) {
         let arg = check(scope, raw_arg, expect.clone())?;
 
-        if arg.shape() != expect {
+        if arg.shape() != *expect {
           return loc.fail("Invalid argument types for call")?;
         }
 
@@ -255,31 +251,21 @@ fn verify(defined: Shape, found: Shape, loc: &Location) -> Result<Shape, SimpleE
   }
 }
 
-fn verify_function_declaration(defined: Shape, expected: Shape, arg_ids: &Vec<String>, loc: &Location) -> Result<(Vec<Shape>, Shape), SimpleError> {
-  let defined_error = defined.pretty();
-
-  if let Shape::SimpleFunctionShape {args, result} = defined {
-    if args.len() != arg_ids.len() {
-      loc.fail( &format!("Incompatible types! Function type has different number of parameters than named arguments. Type: {}, args found: {}", defined_error, arg_ids.len()))
-    } else {
-      let expected_args = if let Shape::SimpleFunctionShape{args: expected_args, ..} = expected {
-        expected_args.clone()
-      } else {
-        vec![shape_unknown(); args.len()]
-      };
-
-      let mut filled_args = Vec::new();
-
-      for (arg, expected_arg) in args.iter().zip(expected_args) {
-        let verified = verify(expected_arg, arg.clone(), &loc)?;
-        filled_args.push(verified);
-      }
-
-      Ok( (filled_args, *result.clone()) )
-    }
+fn verify_function_declaration(parameters: Vec<Parameter>, expected: Shape, loc: &Location) -> Result<Vec<Parameter>, SimpleError> {
+  let expected_args = if let Shape::SimpleFunctionShape{args: expected_args, ..} = expected {
+    expected_args.clone()
   } else {
-    Err(SimpleError::new( format!("Function has type that is not a function type! Declared type: '{}' {}", defined.pretty(), loc.pretty())))
+    vec![shape_unknown(); parameters.len()]
+  };
+
+  let mut filled_args = Vec::new();
+
+  for (arg, expected_arg) in parameters.iter().zip(expected_args) {
+    let verified = verify(expected_arg, arg.shape.clone(), &loc)?;
+    filled_args.push( Parameter{id: arg.id.clone(), shape: verified});
   }
+
+  Ok(filled_args)
 }
 
 
@@ -300,7 +286,7 @@ impl Scope {
   }
 
   fn pre_fill_module_function(&mut self, func: &FunctionDeclarationEx) -> Result<(), SimpleError> {
-    let shape = fill_shape(func.shape.clone(), &func.loc)?;
+    let shape = fill_shape(func.shape(), &func.loc)?;
 
     self.static_scope.insert(func.id.clone(), shape);
     Ok(())

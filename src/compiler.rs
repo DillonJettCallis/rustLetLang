@@ -46,25 +46,25 @@ impl Compiler {
 
 
     for export in &module.exports {
-      context.add_function_ref( &export.content.id,  export.content.shape.clone());
+      context.add_function_ref( &export.content.id,  export.content.shape());
     }
 
     for func in &module.locals {
-      context.add_function_ref(&func.id, func.shape.clone());
+      context.add_function_ref(&func.id, func.shape());
     }
 
 
 
     for export in &module.exports {
-      let (id, bit_func) = self.compile_function(&mut context, &export.content)?;
+      let bit_func = self.compile_function(&mut context, &export.content)?;
 
-      context.functions.insert(id, Rc::new(bit_func));
+      context.functions.insert(export.content.id.clone(), Rc::new(bit_func));
     }
 
     for func in &module.locals {
-      let (id, bit_func) = self.compile_function(&mut context, func)?;
+      let bit_func = self.compile_function(&mut context, func)?;
 
-      context.functions.insert(id, Rc::new(bit_func));
+      context.functions.insert(func.id.clone(), Rc::new(bit_func));
     }
 
     let Compiler { shape_refs } = self;
@@ -78,15 +78,15 @@ impl Compiler {
     })
   }
 
-  fn compile_function(&mut self, context: &mut ModuleContext, ex: &FunctionDeclarationEx) -> Result<(String, BitFunction), SimpleError> {
+  fn compile_function(&mut self, context: &mut ModuleContext, ex: &FunctionDeclarationEx) -> Result<BitFunction, SimpleError> {
     context.reset(ex.args.len() as LocalId);
 
-    for closure in &ex.closures {
+    for closure in &ex.context.closures {
       context.store(closure);
     }
 
     for arg in &ex.args {
-      context.store(&arg);
+      context.store(&arg.id);
     }
 
     let mut body = self.compile_expression(context, &ex.body)?;
@@ -96,12 +96,12 @@ impl Compiler {
       body.push(Instruction::Return);
     }
 
-    return Ok((ex.id.clone(), BitFunction {
+    return Ok(BitFunction {
       max_locals: context.max_locals + 1,
-      shape: ex.shape.clone(),
+      shape: ex.shape(),
       body,
       source: vec![],
-    }));
+    });
   }
 
   fn compile_expression(&mut self, context: &mut ModuleContext, ex: &Expression) -> Result<Vec<Instruction>, SimpleError> {
@@ -128,17 +128,17 @@ trait Compilable {
 
 impl Compilable for FunctionDeclarationEx {
   fn compile(&self, compiler: &mut Compiler, context: &mut ModuleContext) -> Result<Vec<Instruction>, SimpleError> {
-    let FunctionDeclarationEx{shape, loc, id, args, body, closures} = self;
-    if closures.is_empty() {
+
+    if self.context.closures.is_empty() {
       let full_id = format!("$closure:{}", context.gen_next_function_id());
-      let (_, bit_func) = compiler.compile_function(context, self)?;
-      let const_id = context.add_function_ref(&full_id, shape.clone());
+      let bit_func = compiler.compile_function(context, self)?;
+      let const_id = context.add_function_ref(&full_id, self.shape());
       context.functions.insert(full_id, Rc::new(bit_func));
 
       let mut body = vec![Instruction::LoadConst {kind: LoadType::Function, const_id}];
 
-      if id != "<anon>" {
-        let local = context.store(&id);
+      if !self.context.is_lambda {
+        let local = context.store(&self.id);
         body.push(Instruction::StoreValue { local });
       }
 
@@ -146,8 +146,8 @@ impl Compilable for FunctionDeclarationEx {
     } else {
       let mut body = Vec::new();
 
-      for local in closures {
-        let lookup = context.lookup(local, loc)?;
+      for local in &self.context.closures {
+        let lookup = context.lookup(local, &self.loc)?;
 
         match lookup {
           Lookup::Local(local) => {
@@ -163,14 +163,14 @@ impl Compilable for FunctionDeclarationEx {
       }
 
       let full_id = format!("$closure:{}", context.gen_next_function_id());
-      let (_, bit_func) = compiler.compile_function(context, self)?;
-      let func_id = context.add_function_ref(&full_id, shape.clone());
+      let bit_func = compiler.compile_function(context, self)?;
+      let func_id = context.add_function_ref(&full_id, self.shape());
       context.functions.insert(full_id, Rc::new(bit_func));
 
-      body.push(Instruction::BuildClosure {param_count: closures.len() as LocalId, func_id});
+      body.push(Instruction::BuildClosure {param_count: self.context.closures.len() as LocalId, func_id});
 
-      if id != "<anon>" {
-        let local = context.store(&id);
+      if !self.context.is_lambda {
+        let local = context.store(&self.id);
         body.push(Instruction::StoreValue { local });
       }
 
@@ -252,7 +252,7 @@ impl Compilable for CallEx {
 
     let func_shape = func.shape();
 
-    let shape_id = compiler.shape_refs.iter().position(|other| other == func_shape)
+    let shape_id = compiler.shape_refs.iter().position(|other| *other == func_shape)
       .or_else(move || {
         compiler.shape_refs.push(func_shape.clone());
         Some(compiler.shape_refs.len() - 1)

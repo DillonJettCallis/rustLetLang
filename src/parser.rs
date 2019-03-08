@@ -52,11 +52,11 @@ impl Parser {
         "export" => {
           let loc = token.location.clone();
           self.skip();
-          let content = self.parse_function()?;
+          let content = self.parse_function(false)?;
           exports.push(Export { loc, content });
         }
         "fun" => {
-          locals.push(self.parse_function()?);
+          locals.push(self.parse_function(false)?);
         }
         "<EOF>" => {
           return Ok(Module { exports, locals });
@@ -68,7 +68,7 @@ impl Parser {
     }
   }
 
-  fn parse_function(&mut self) -> Result<FunctionDeclarationEx, SimpleError> {
+  fn parse_function(&mut self, is_local: bool) -> Result<FunctionDeclarationEx, SimpleError> {
     // Assume fun is already parsed
 
     let fun = self.next();
@@ -80,17 +80,18 @@ impl Parser {
     self.expect_literal("(")?;
 
     let mut args = Vec::new();
-    let mut arg_types = Vec::new();
 
     if !self.check_literal(")") {
-      args.push(self.expect_kind(TokenKind::Id)?.value);
+      let arg_id = self.expect_kind(TokenKind::Id)?.value;
       self.expect_literal(":")?;
-      arg_types.push(self.parse_type()?);
+      let arg_shape = self.parse_type()?;
+      args.push(Parameter{id: arg_id, shape: arg_shape});
 
       while self.check_literal(",") {
-        args.push(self.expect_kind(TokenKind::Id)?.value);
+        let arg_id = self.expect_kind(TokenKind::Id)?.value;
         self.expect_literal(":")?;
-        arg_types.push(self.parse_type()?);
+        let arg_shape = self.parse_type()?;
+        args.push(Parameter{id: arg_id, shape: arg_shape});
       }
 
       self.expect_literal(")")?;
@@ -98,15 +99,13 @@ impl Parser {
 
     self.expect_literal(":")?;
 
-    let result_type = self.parse_type()?;
+    let result = self.parse_type()?;
 
     self.expect_literal("=")?;
 
     let body = self.parse_expression()?;
 
-    let shape = Shape::SimpleFunctionShape{ args: arg_types, result: Box::new(result_type)};
-
-    Ok(FunctionDeclarationEx{ shape, loc, id, args, body, closures: Vec::new() })
+    Ok(FunctionDeclarationEx{ result, loc, id, args, body, context: FunctionContext::new(is_local, false) })
   }
 
   fn parse_lambda(&mut self) -> Result<Expression, SimpleError> {
@@ -114,29 +113,30 @@ impl Parser {
 
     let loc = self.peek_back().location;
     let mut args = Vec::new();
-    let mut arg_types = Vec::new();
 
     let maybe_arrow = self.peek();
 
     if maybe_arrow.value != "->" && maybe_arrow.value != "=>" {
-      args.push(self.expect_kind(TokenKind::Id)?.value);
-      if self.check_literal(":") {
-        arg_types.push(self.parse_type()?);
+      let arg_id = self.expect_kind(TokenKind::Id)?.value;
+      let arg_shape = if self.check_literal(":") {
+        self.parse_type()?
       } else {
-        arg_types.push(shape_unknown());
-      }
+        shape_unknown()
+      };
+      args.push(Parameter{id: arg_id, shape: arg_shape});
 
       while self.check_literal(",") {
-        args.push(self.expect_kind(TokenKind::Id)?.value);
-        if self.check_literal(":") {
-          arg_types.push(self.parse_type()?);
+        let arg_id = self.expect_kind(TokenKind::Id)?.value;
+        let arg_shape = if self.check_literal(":") {
+          self.parse_type()?
         } else {
-          arg_types.push(shape_unknown());
-        }
+          shape_unknown()
+        };
+        args.push(Parameter{id: arg_id, shape: arg_shape});
       }
     }
 
-    let result_type = if self.check_literal("->") {
+    let result = if self.check_literal("->") {
       self.parse_type()?
     } else {
       shape_unknown()
@@ -156,9 +156,7 @@ impl Parser {
       body
     }));
 
-    let shape = Shape::SimpleFunctionShape{ args: arg_types, result: Box::new(result_type)};
-
-    Ok(FunctionDeclarationEx { shape, loc, id: "<anon>".to_string(), args, body: block, closures: Vec::new() }.wrap())
+    Ok(FunctionDeclarationEx { result, loc, id: "<anon>".to_string(), args, body: block, context: FunctionContext::new(true, true) }.wrap())
   }
 
   fn parse_statement(&mut self) -> Result<Expression, SimpleError> {
@@ -166,7 +164,7 @@ impl Parser {
 
     match maybe_key.value.as_ref() {
       "let" => self.parse_assignment(),
-      "fun" => Ok(self.parse_function()?.wrap()),
+      "fun" => Ok(self.parse_function(true)?.wrap()),
       _ => self.parse_expression()
     }
   }

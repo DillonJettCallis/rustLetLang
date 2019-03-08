@@ -48,28 +48,56 @@ impl Expression {
     }
   }
 
-  pub fn shape(&self) -> &Shape {
+  pub fn shape(&self) -> Shape {
     match self {
-      Expression::FunctionDeclaration(ex) => &ex.shape,
-      Expression::Assignment(ex) => &ex.shape,
-      Expression::Variable(ex) => &ex.shape,
-      Expression::BinaryOp(ex) => &ex.shape,
-      Expression::Call(ex) => &ex.shape,
-      Expression::Block(ex) => &ex.shape,
-      Expression::StringLiteral(ex) => &ex.shape,
-      Expression::NumberLiteral(ex) => &ex.shape,
+      Expression::FunctionDeclaration(ex) => ex.shape(),
+      Expression::Assignment(ex) => ex.shape.clone(),
+      Expression::Variable(ex) => ex.shape.clone(),
+      Expression::BinaryOp(ex) => ex.shape.clone(),
+      Expression::Call(ex) => ex.shape.clone(),
+      Expression::Block(ex) => ex.shape.clone(),
+      Expression::StringLiteral(ex) => ex.shape.clone(),
+      Expression::NumberLiteral(ex) => ex.shape.clone(),
+    }
+  }
+}
+pub struct FunctionContext {
+  pub is_lambda: bool,
+  pub is_local: bool,
+  pub closures: Vec<String>,
+}
+
+impl FunctionContext {
+  pub fn new(is_local: bool, is_lambda: bool) -> FunctionContext {
+    FunctionContext {
+      is_local,
+      is_lambda,
+      closures: Vec::new(),
+    }
+  }
+
+  pub fn set_closures(&self, closures: Vec<String>) -> FunctionContext {
+    FunctionContext {
+      is_local: self.is_local,
+      is_lambda: self.is_lambda,
+      closures,
     }
   }
 }
 
+#[derive(Debug, Clone)]
+pub struct Parameter {
+  pub id: String,
+  pub shape: Shape,
+}
 
 pub struct FunctionDeclarationEx {
-  pub shape: Shape,
+  pub result: Shape,
   pub loc: Location,
   pub id: String,
-  pub args: Vec<String>,
+  pub args: Vec<Parameter>,
   pub body: Expression,
-  pub closures: Vec<String>,
+  pub context: FunctionContext,
 }
 
 pub struct AssignmentEx {
@@ -138,6 +166,10 @@ pub struct Export {
 impl FunctionDeclarationEx {
   pub fn wrap(self) -> Expression {
     Expression::FunctionDeclaration(Box::new(self))
+  }
+
+  pub fn shape(&self) -> Shape {
+    Shape::SimpleFunctionShape {args: self.args.iter().map(|arg| arg.shape.clone()).collect(), result: Box::new(self.result.clone()) }
   }
 }
 
