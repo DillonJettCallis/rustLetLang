@@ -332,7 +332,30 @@ impl Parser {
         result
       })
     } else {
-      return self.parse_type_term();
+      return self.parse_type_generic();
+    }
+  }
+
+  fn parse_type_generic(&mut self) -> Result<Shape, SimpleError> {
+    let base = self.parse_type_term()?;
+
+    if self.check_literal("[") {
+      let mut args = Vec::new();
+
+      args.push(self.parse_type()?);
+
+      while self.check_literal(",") {
+        args.push(self.parse_type()?);
+      }
+
+      self.expect_literal("]")?;
+
+      Ok(Shape::GenericShape {
+        base: Box::new(base),
+        args
+      })
+    } else {
+      return Ok(base)
     }
   }
 

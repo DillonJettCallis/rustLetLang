@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use simple_error::SimpleError;
 
 use ast::Module;
-use bytecode::AppDirectory;
+use bytecode::BitModule;
 use bytecode::BitFunction;
 use bytecode::FunctionRef;
 use bytecode::Instruction;

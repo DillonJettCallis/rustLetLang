@@ -203,6 +203,24 @@ fn check(scope: &mut Scope, ex: Expression, expected: Shape) -> Result<Expressio
 
 fn fill_shape(shape: Shape, loc: &Location) -> Result<Shape, SimpleError> {
   match shape {
+    Shape::GenericShapeConstructor{base, args} => {
+      Ok(Shape::GenericShapeConstructor {
+        base: Box::new(fill_shape(*base, loc)?),
+        args
+      })
+    }
+    Shape::GenericShape{base, args} => {
+      let mut filled_args = Vec::new();
+
+      for arg in args {
+        filled_args.push(fill_shape(arg, loc)?)
+      }
+
+      Ok(Shape::GenericShape {
+        base: Box::new(fill_shape(*base, loc)?),
+        args: filled_args
+      })
+    },
     Shape::SimpleFunctionShape { args: raw_args, result: raw_result } => {
       let mut args: Vec<Shape> = Vec::new();
 

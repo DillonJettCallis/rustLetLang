@@ -1,7 +1,7 @@
-<none> = private, only usable with in the same module
-protect = usable to other modules in the same directory and the children of the current directory
-export = usable to all other modules in the current package
-publish = usable by anyone in any dependent packages
+private = private, only usable with in the same module (default)
+protected = usable to other modules in the same directory and the children of the current directory
+internal = usable to all other modules in the current package
+public = usable by anyone in any dependent packages
 
 Testing files are located in a separate directory that should have the same structure as the main directory,
 and use the same names plus 'Test' at the end. Test files will have the same access as the file they are named after, so if there
@@ -37,22 +37,22 @@ src
   main
     List
       Partition.let
-        protect fun partition() ...
+        protected fun partition() ...
       GroupBy.let
-        protect fun groupBy() ...
+        protected fun groupBy() ...
       List.let
-        export partition from Partition
-        export groupBy   from GroupBy
+        internal partition from Partition
+        internal groupBy   from GroupBy
     Utils
       StringUtils.let
-        export fun join() ...
+        internal fun join() ...
       NumberUtils.let
-        export fun sum() ...
+        internal fun sum() ...
     Test.let
       import { groupBy, partition } from List
       import { join } from Utils::StringUtils
       import { sum } from Utils::NumberUtils
-      publish doThing() ...
+      public doThing() ...
   test
     List
       Partition.let
@@ -67,7 +67,7 @@ src
 build.file
 
 
-
+```
 // String and Int are implicitly imported
 import Core.Number;
 
@@ -81,7 +81,7 @@ fun parseIntPair(in: String): HList[Int, Int] = {
   // a String as it's first argument.
   // String is already imported
 
-  let List[leftStr, rightStr] in.split(',');
+  let List[leftStr, rightStr] = in.split(',');
   let left = Number::parseInt(leftStr);
   let right = Number::parseInt(rightStr);
   return HList(left, right);
@@ -100,3 +100,25 @@ fun main() = {
   let result = secondHalf(raw);
   Test.assert(18, result);
 }
+```
+
+```
+class Person [
+  name: String;
+  age: Float;
+]
+
+fun test(): List[Int] = {
+  let list = List('b', 'a', 'b')
+  let map = Map['a': 1, 'b': 2]
+  
+  list.map({ letter: String -> Int => map.get(letter) })
+}
+```
+
+
+
+
+
+
+

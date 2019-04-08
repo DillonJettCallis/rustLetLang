@@ -15,7 +15,7 @@ use ast::Module;
 use ast::NumberLiteralEx;
 use ast::StringLiteralEx;
 use ast::VariableEx;
-use bytecode::AppDirectory;
+use bytecode::BitModule;
 use bytecode::BitFunction;
 use bytecode::ConstantId;
 use bytecode::FunctionRef;
@@ -31,7 +31,7 @@ pub struct Compiler {
 }
 
 impl Compiler {
-  pub fn compile(module: Module) -> Result<AppDirectory, SimpleError> {
+  pub fn compile(module: Module) -> Result<BitModule, SimpleError> {
     let me = Compiler {
       shape_refs: Vec::new(),
     };
@@ -41,7 +41,7 @@ impl Compiler {
     me.compile_app(core, module)
   }
 
-  fn compile_app(mut self, core: CoreContext, module: Module) -> Result<AppDirectory, SimpleError> {
+  fn compile_app(mut self, core: CoreContext, module: Module) -> Result<BitModule, SimpleError> {
     let mut context = ModuleContext::new(core);
 
 
@@ -70,7 +70,7 @@ impl Compiler {
     let Compiler { shape_refs } = self;
     let ModuleContext{string_constants, function_refs, functions, ..} = context;
 
-    Ok(AppDirectory {
+    Ok(BitModule {
       string_constants,
       function_refs,
       functions,

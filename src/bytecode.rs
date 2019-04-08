@@ -11,7 +11,7 @@ use std::rc::Rc;
 pub type LocalId = u16;
 pub type ConstantId = u32;
 
-pub struct AppDirectory {
+pub struct BitModule {
   pub string_constants: Vec<String>,
   pub function_refs: Vec<FunctionRef>,
   pub functions: HashMap<String, Rc<RunFunction>>,
