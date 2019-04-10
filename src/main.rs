@@ -6,11 +6,11 @@ use std::collections::HashMap;
 use simple_error::SimpleError;
 
 use ast::Module;
-use bytecode::{BitModule, BitPackage, BitApplication};
+use bytecode::{BitApplication, BitModule, BitPackage};
 use bytecode::BitFunction;
 use bytecode::FunctionRef;
 use bytecode::Instruction;
-use compiler::Compiler;
+use compiler::compile_package;
 use interpreter::Machine;
 use interpreter::RunFunction;
 use runtime::Value;
@@ -38,7 +38,7 @@ fn compile_test() -> Result<Value, SimpleError> {
   let module_name = String::from("basic");
   let package_name = String::from("test");
 
-  let package = Compiler::compile_package("test", "/home/dillon/projects/rustLetLang/test")?;
+  let package = compile_package("test", "/home/dillon/projects/rustLetLang/test")?;
   let mut app = BitApplication::new(package_name.clone(), module_name);
   app.packages.insert(package_name, package);
 

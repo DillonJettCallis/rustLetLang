@@ -31,149 +31,144 @@ use std::path::{Path, PathBuf};
 use parser::parse;
 use typechecker;
 
-pub struct Compiler {
-  shape_refs: Vec<Shape>,
-}
+pub fn compile_package(name: &str, base_dir: &str) -> Result<BitPackage, SimpleError> {
+  let raw_modules = find_modules(base_dir, name)?;
 
-impl Compiler {
+  let mut modules = HashMap::new();
 
-  pub fn compile_package(name: &str, base_dir: &str) -> Result<BitPackage, SimpleError> {
-    let raw_modules = Compiler::find_modules(base_dir, name)?;
-
-    let mut modules = HashMap::new();
-
-    for parsed in raw_modules {
-      let checked = typechecker::check_module(parsed)?;
-      modules.insert(checked.name.clone(), Compiler::compile(checked)?);
-    }
-
-    Ok(BitPackage {
-      modules
-    })
+  for parsed in raw_modules {
+    let checked = typechecker::check_module(parsed)?;
+    modules.insert(checked.name.clone(), compile(checked)?);
   }
 
-  fn find_modules(base: &str, package: &str) -> Result<Vec<Module>, SimpleError> {
-    let mut modules = Vec::new();
-    let mut dirs = vec![Path::new(base).to_path_buf()];
+  Ok(BitPackage {
+    modules
+  })
+}
 
-    while !dirs.is_empty() {
-      let next_dir = dirs.pop().unwrap();
+fn find_modules(base: &str, package: &str) -> Result<Vec<Module>, SimpleError> {
+  let mut modules = Vec::new();
+  let mut dirs = vec![Path::new(base).to_path_buf()];
 
-      for entry in fs::read_dir(next_dir).map_err(|err| SimpleError::from(err))? {
-        let entry = entry.map_err(|err| SimpleError::from(err))?;
-        let path = entry.path();
-        if path.is_dir() {
-          dirs.push(path.clone())
-        } else if path.extension().and_then(|ex| ex.to_str()).filter(|ex| *ex == "let").is_some() {
-          let full_module = path.strip_prefix(base).map_err(|err| SimpleError::from(err))?
-            .to_str()
-            .ok_or_else(|| SimpleError::new("Invalid path"))?
-            .replace("/", ".") // handle both *nix and windows paths
-            .replace("\\", ".");
+  while !dirs.is_empty() {
+    let next_dir = dirs.pop().unwrap();
 
-          // remove .let at the end
-          let module = &full_module[..full_module.len() - 4];
+    for entry in fs::read_dir(next_dir).map_err(|err| SimpleError::from(err))? {
+      let entry = entry.map_err(|err| SimpleError::from(err))?;
+      let path = entry.path();
+      if path.is_dir() {
+        dirs.push(path.clone())
+      } else if path.extension().and_then(|ex| ex.to_str()).filter(|ex| *ex == "let").is_some() {
+        let full_module = path.strip_prefix(base).map_err(|err| SimpleError::from(err))?
+          .to_str()
+          .ok_or_else(|| SimpleError::new("Invalid path"))?
+          .replace("/", ".") // handle both *nix and windows paths
+          .replace("\\", ".");
 
-          let parsed = parse(&path, package, module)?;
-          modules.push(parsed);
-        }
+        // remove .let at the end
+        let module = &full_module[..full_module.len() - 4];
+
+        let parsed = parse(&path, package, module)?;
+        modules.push(parsed);
       }
     }
-
-    Ok(modules)
   }
 
-  pub fn compile(module: Module) -> Result<BitModule, SimpleError> {
-    let me = Compiler {
-      shape_refs: Vec::new(),
-    };
+  Ok(modules)
+}
 
-    let core = CoreContext::new();
+pub fn compile(module: Module) -> Result<BitModule, SimpleError> {
+  let core = CoreContext::new();
 
-    me.compile_module(core, module)
+  compile_module(core, module)
+}
+
+fn compile_module(core: CoreContext, module: Module) -> Result<BitModule, SimpleError> {
+  let mut context = ModuleContext::new(core, &module);
+
+  for dec in &module.functions {
+    context.add_function_ref(&dec.ex.id, dec.ex.shape());
   }
 
-  fn compile_module(mut self, core: CoreContext, module: Module) -> Result<BitModule, SimpleError> {
-    let mut context = ModuleContext::new(core, &module);
+  for dec in &module.functions {
+    let bit_func = compile_function(&mut context, &dec.ex)?;
 
-    for dec in &module.functions {
-      context.add_function_ref(&dec.ex.id, dec.ex.shape());
-    }
-
-    for dec in &module.functions {
-      let bit_func = self.compile_function(&mut context, &dec.ex)?;
-
-      context.functions.insert(dec.ex.id.clone(), Rc::new(bit_func));
-    }
-
-    let Compiler { shape_refs } = self;
-    let ModuleContext{string_constants, function_refs, functions, ..} = context;
-
-    Ok(BitModule {
-      string_constants,
-      function_refs,
-      functions,
-      shape_refs,
-    })
+    context.functions.insert(dec.ex.id.clone(), Rc::new(bit_func));
   }
 
-  fn compile_function(&mut self, context: &mut ModuleContext, ex: &FunctionDeclarationEx) -> Result<BitFunction, SimpleError> {
-    context.reset(ex.args.len() as LocalId);
+  let ModuleContext { 
+    string_constants, 
+    function_refs, 
+    shape_refs, 
+    functions, 
+    .. 
+  } = context;
 
-    for closure in &ex.context.closures {
-      context.store(closure);
-    }
+  Ok(BitModule {
+    string_constants,
+    function_refs,
+    functions,
+    shape_refs,
+  })
+}
 
-    for arg in &ex.args {
-      context.store(&arg.id);
-    }
+fn compile_function(context: &mut ModuleContext, ex: &FunctionDeclarationEx) -> Result<BitFunction, SimpleError> {
+  context.reset(ex.args.len() as LocalId);
 
-    let mut body = self.compile_expression(context, &ex.body)?;
-
-    // if we don't end with a return, add one anyway.
-    if let Some(Instruction::Return) = body.last() {} else {
-      body.push(Instruction::Return);
-    }
-
-    return Ok(BitFunction {
-      package: context.package.clone(),
-      module: context.module.clone(),
-
-      max_locals: context.max_locals + 1,
-      shape: ex.shape(),
-      body,
-      source: vec![],
-    });
+  for closure in &ex.context.closures {
+    context.store(closure);
   }
 
-  fn compile_expression(&mut self, context: &mut ModuleContext, ex: &Expression) -> Result<Vec<Instruction>, SimpleError> {
-    match ex {
-      Expression::FunctionDeclaration(ex) => ex.compile(self, context),
-      Expression::Assignment(ex) => ex.compile(self, context),
-      Expression::Variable(ex) => ex.compile(self, context),
-      Expression::BinaryOp(ex) => ex.compile(self, context),
-      Expression::Call(ex) => ex.compile(self, context),
-      Expression::Block(ex) => ex.compile(self, context),
-      Expression::StringLiteral(ex) => ex.compile(self, context),
-      Expression::NumberLiteral(ex) => ex.compile(self, context),
+  for arg in &ex.args {
+    context.store(&arg.id);
+  }
 
-      _ => unimplemented!()
-    }
+  let mut body = compile_expression(context, &ex.body)?;
+
+  // if we don't end with a return, add one anyway.
+  if let Some(Instruction::Return) = body.last() {} else {
+    body.push(Instruction::Return);
+  }
+
+  return Ok(BitFunction {
+    package: context.package.clone(),
+    module: context.module.clone(),
+
+    max_locals: context.max_locals + 1,
+    shape: ex.shape(),
+    body,
+    source: vec![],
+  });
+}
+
+fn compile_expression(context: &mut ModuleContext, ex: &Expression) -> Result<Vec<Instruction>, SimpleError> {
+  match ex {
+    Expression::FunctionDeclaration(ex) => ex.compile( context),
+    Expression::Assignment(ex) => ex.compile( context),
+    Expression::Variable(ex) => ex.compile( context),
+    Expression::BinaryOp(ex) => ex.compile( context),
+    Expression::Call(ex) => ex.compile( context),
+    Expression::Block(ex) => ex.compile( context),
+    Expression::StringLiteral(ex) => ex.compile( context),
+    Expression::NumberLiteral(ex) => ex.compile( context),
+
+    _ => unimplemented!()
   }
 }
+
 
 trait Compilable {
 
-  fn compile(&self, compiler: &mut Compiler, context: &mut ModuleContext) -> Result<Vec<Instruction>, SimpleError>;
+  fn compile(&self, context: &mut ModuleContext) -> Result<Vec<Instruction>, SimpleError>;
 
 }
 
 impl Compilable for FunctionDeclarationEx {
-  fn compile(&self, compiler: &mut Compiler, context: &mut ModuleContext) -> Result<Vec<Instruction>, SimpleError> {
+  fn compile(&self, context: &mut ModuleContext) -> Result<Vec<Instruction>, SimpleError> {
 
     if self.context.closures.is_empty() {
       let full_id = format!("$closure:{}", context.gen_next_function_id());
-      let bit_func = compiler.compile_function(context, self)?;
+      let bit_func = compile_function(context, self)?;
       let const_id = context.add_function_ref(&full_id, self.shape());
       context.functions.insert(full_id, Rc::new(bit_func));
 
@@ -205,7 +200,7 @@ impl Compilable for FunctionDeclarationEx {
       }
 
       let full_id = format!("$closure:{}", context.gen_next_function_id());
-      let bit_func = compiler.compile_function(context, self)?;
+      let bit_func = compile_function(context, self)?;
       let func_id = context.add_function_ref(&full_id, self.shape());
       context.functions.insert(full_id, Rc::new(bit_func));
 
@@ -222,9 +217,9 @@ impl Compilable for FunctionDeclarationEx {
 }
 
 impl Compilable for AssignmentEx {
-  fn compile(&self, compiler: &mut Compiler, context: &mut ModuleContext) -> Result<Vec<Instruction>, SimpleError> {
+  fn compile(&self, context: &mut ModuleContext) -> Result<Vec<Instruction>, SimpleError> {
     let AssignmentEx{ shape, loc, id, body } = self;
-    let mut assign = compiler.compile_expression(context, body)?;
+    let mut assign = compile_expression(context, body)?;
     let local = context.store(id);
     assign.push(Instruction::StoreValue { local });
     return Ok(assign);
@@ -232,7 +227,7 @@ impl Compilable for AssignmentEx {
 }
 
 impl Compilable for VariableEx {
-  fn compile(&self, compiler: &mut Compiler, context: &mut ModuleContext) -> Result<Vec<Instruction>, SimpleError> {
+  fn compile(&self, context: &mut ModuleContext) -> Result<Vec<Instruction>, SimpleError> {
     let VariableEx{ shape, loc, id } = self;
     let lookup = context.lookup(id, loc)?;
 
@@ -251,10 +246,10 @@ impl Compilable for VariableEx {
 }
 
 impl Compilable for BinaryOpEx {
-  fn compile(&self, compiler: &mut Compiler, context: &mut ModuleContext) -> Result<Vec<Instruction>, SimpleError> {
+  fn compile(&self, context: &mut ModuleContext) -> Result<Vec<Instruction>, SimpleError> {
     let BinaryOpEx{ shape, loc, op, left, right } = self;
-    let mut body = compiler.compile_expression(context, left)?;
-    let mut other = compiler.compile_expression(context, right)?;
+    let mut body = compile_expression(context, left)?;
+    let mut other = compile_expression(context, right)?;
     body.append(&mut other);
 
     let id = format!("Core.{}", op);
@@ -268,14 +263,14 @@ impl Compilable for BinaryOpEx {
 }
 
 impl Compilable for CallEx {
-  fn compile(&self, compiler: &mut Compiler, context: &mut ModuleContext) -> Result<Vec<Instruction>, SimpleError> {
+  fn compile(&self, context: &mut ModuleContext) -> Result<Vec<Instruction>, SimpleError> {
     let CallEx{ shape, loc, func, args } = self;
     let mut body = Vec::new();
 
     if let Expression::Variable(var) = func {
       if let Lookup::Static(func_id) = context.lookup(&var.id, loc)? {
         for arg in args {
-          let mut more = compiler.compile_expression(context, arg)?;
+          let mut more = compile_expression(context, arg)?;
           body.append(&mut more);
         }
 
@@ -284,20 +279,20 @@ impl Compilable for CallEx {
       }
     }
 
-    let mut function = compiler.compile_expression(context, func)?;
+    let mut function = compile_expression(context, func)?;
     body.append(&mut function);
 
     for arg in args {
-      let mut more = compiler.compile_expression(context, arg)?;
+      let mut more = compile_expression(context, arg)?;
       body.append(&mut more);
     }
 
     let func_shape = func.shape();
 
-    let shape_id = compiler.shape_refs.iter().position(|other| *other == func_shape)
+    let shape_id = context.shape_refs.iter().position(|other| *other == func_shape)
       .or_else(move || {
-        compiler.shape_refs.push(func_shape.clone());
-        Some(compiler.shape_refs.len() - 1)
+        context.shape_refs.push(func_shape.clone());
+        Some(context.shape_refs.len() - 1)
       }).unwrap() as u32;
 
     body.push(Instruction::CallDynamic { shape_id });
@@ -306,13 +301,13 @@ impl Compilable for CallEx {
 }
 
 impl Compilable for BlockEx {
-  fn compile(&self, compiler: &mut Compiler, context: &mut ModuleContext) -> Result<Vec<Instruction>, SimpleError> {
+  fn compile(&self, context: &mut ModuleContext) -> Result<Vec<Instruction>, SimpleError> {
     let BlockEx{ shape, loc, body } = self;
     context.push_scope();
     let mut content: Vec<Instruction> = Vec::new();
 
     for next in body {
-      let mut next_content = compiler.compile_expression(context, next)?;
+      let mut next_content = compile_expression(context, next)?;
       content.append(&mut next_content);
     }
 
@@ -327,7 +322,7 @@ impl Compilable for BlockEx {
 }
 
 impl Compilable for StringLiteralEx {
-  fn compile(&self, compiler: &mut Compiler, context: &mut ModuleContext) -> Result<Vec<Instruction>, SimpleError> {
+  fn compile(&self, context: &mut ModuleContext) -> Result<Vec<Instruction>, SimpleError> {
     let StringLiteralEx{ shape, loc, value } = self;
     let const_id = context.string_constant(value);
 
@@ -336,7 +331,7 @@ impl Compilable for StringLiteralEx {
 }
 
 impl Compilable for NumberLiteralEx {
-  fn compile(&self, compiler: &mut Compiler, context: &mut ModuleContext) -> Result<Vec<Instruction>, SimpleError> {
+  fn compile(&self, context: &mut ModuleContext) -> Result<Vec<Instruction>, SimpleError> {
     Ok(vec![Instruction::LoadConstFloat { value: self.value.clone() }])
   }
 }
@@ -374,6 +369,8 @@ struct ModuleContext {
   function_ref_map: HashMap<String, (ConstantId, FunctionRef)>,
   function_refs: Vec<FunctionRef>,
 
+  shape_refs: Vec<Shape>,
+
   string_constant_map: HashMap<String, ConstantId>,
   string_constants: Vec<String>,
 
@@ -393,6 +390,8 @@ impl ModuleContext {
 
       function_ref_map: HashMap::new(),
       function_refs: Vec::new(),
+
+      shape_refs: Vec::new(),
 
       string_constant_map: HashMap::new(),
       string_constants: Vec::new(),
