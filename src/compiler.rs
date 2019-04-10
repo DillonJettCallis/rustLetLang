@@ -96,27 +96,14 @@ impl Compiler {
   fn compile_module(mut self, core: CoreContext, module: Module) -> Result<BitModule, SimpleError> {
     let mut context = ModuleContext::new(core, &module);
 
-
-    for export in &module.exports {
-      context.add_function_ref( &export.content.id,  export.content.shape());
+    for dec in &module.functions {
+      context.add_function_ref(&dec.ex.id, dec.ex.shape());
     }
 
-    for func in &module.locals {
-      context.add_function_ref(&func.id, func.shape());
-    }
+    for dec in &module.functions {
+      let bit_func = self.compile_function(&mut context, &dec.ex)?;
 
-
-
-    for export in &module.exports {
-      let bit_func = self.compile_function(&mut context, &export.content)?;
-
-      context.functions.insert(export.content.id.clone(), Rc::new(bit_func));
-    }
-
-    for func in &module.locals {
-      let bit_func = self.compile_function(&mut context, func)?;
-
-      context.functions.insert(func.id.clone(), Rc::new(bit_func));
+      context.functions.insert(dec.ex.id.clone(), Rc::new(bit_func));
     }
 
     let Compiler { shape_refs } = self;

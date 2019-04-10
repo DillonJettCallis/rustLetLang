@@ -156,13 +156,19 @@ pub struct NumberLiteralEx {
 pub struct Module {
   pub package: String,
   pub name: String,
-  pub exports: Vec<Export>,
-  pub locals: Vec<FunctionDeclarationEx>,
+  pub functions: Vec<FunctionDeclaration>,
 }
 
-pub struct Export {
-  pub loc: Location,
-  pub content: FunctionDeclarationEx,
+pub struct FunctionDeclaration {
+  pub visibility: Visibility,
+  pub ex: FunctionDeclarationEx,
+}
+
+pub enum Visibility {
+  Private,
+  Protected,
+  Internal,
+  Public
 }
 
 impl FunctionDeclarationEx {

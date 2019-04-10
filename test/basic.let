@@ -2,13 +2,13 @@
 
 
 
-fun higher(op: {Float, Float -> Float}): Float = op(2, 4)
 
-export fun main(): Float = {
+
+public fun main(): Float = {
     let outside = 2;
 
     let x = higher({a, b -> Float => a + b * outside});
     x
 }
 
-
+fun higher(op: {Float, Float -> Float}): Float = op(2, 4)

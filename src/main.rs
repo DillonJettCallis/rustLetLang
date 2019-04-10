@@ -35,7 +35,7 @@ fn main() {
 }
 
 fn compile_test() -> Result<Value, SimpleError> {
-  let module_name = String::from("util");
+  let module_name = String::from("basic");
   let package_name = String::from("test");
 
   let package = Compiler::compile_package("test", "/home/dillon/projects/rustLetLang/test")?;

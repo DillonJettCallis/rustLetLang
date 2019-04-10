@@ -43,29 +43,30 @@ struct Parser {
 
 impl Parser {
   fn parse_module(&mut self, package: &str, name: &str) -> Result<Module, SimpleError> {
-    let mut exports = Vec::new();
-    let mut locals = Vec::new();
+    let mut functions = Vec::new();
 
     loop {
-      let token = self.peek();
+      let token = self.next();
 
-      match token.value.as_ref() {
-        "export" => {
-          let loc = token.location.clone();
-          self.skip();
-          let content = self.parse_function(false)?;
-          exports.push(Export { loc, content });
-        }
+      let visibility = match token.value.as_ref() {
+        "public" => Visibility::Public,
+        "internal" => Visibility::Internal,
+        "protected" => Visibility::Protected,
+        "private" => Visibility::Private,
         "fun" => {
-          locals.push(self.parse_function(false)?);
-        }
+          self.prev();
+          Visibility::Private
+        },
         "<EOF>" => {
-          return Ok(Module { package: String::from(package), name: String::from(name), exports, locals });
+          return Ok(Module { package: String::from(package), name: String::from(name), functions });
         }
         _ => {
           return Err(SimpleError::new(format!("Unexpected token: '{}' {}", token.value, token.location.pretty())));
         }
-      }
+      };
+
+      let ex = self.parse_function(false)?;
+      functions.push(FunctionDeclaration{visibility, ex});
     }
   }
 

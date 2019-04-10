@@ -6,38 +6,24 @@ use ast::*;
 use shapes::*;
 
 pub fn check_module(module: Module) -> Result<Module, SimpleError> {
-  let mut exports = Vec::new();
-  let mut locals = Vec::new();
+  let mut functions = Vec::new();
 
   let mut scope = Scope::new();
   scope.create_function_scope();
 
-  for ex in &module.exports {
-    scope.pre_fill_module_function(&ex.content)?;
+  for dec in &module.functions {
+    scope.pre_fill_module_function(&dec.ex)?;
   }
 
-  for ex in &module.locals {
-    scope.pre_fill_module_function(ex)?;
-  }
-
-  for ex in module.exports {
-    let loc = ex.loc.clone();
-    if let Expression::FunctionDeclaration(content) = ex.content.check(&mut scope, shape_unknown())? {
-      exports.push(Export { content: *content, loc });
+  for dec in module.functions {
+    if let Expression::FunctionDeclaration(content) = dec.ex.check(&mut scope, shape_unknown())? {
+      functions.push(FunctionDeclaration {visibility: dec.visibility, ex: *content});
     } else {
       return Err(SimpleError::new("FunctionDeclaration didn't return itself!"))
     }
   }
 
-  for ex in module.locals {
-    if let Expression::FunctionDeclaration(content) = ex.check(&mut scope, shape_unknown())? {
-      locals.push(*content);
-    } else {
-      return Err(SimpleError::new("FunctionDeclaration didn't return itself!"))
-    }
-  }
-
-  Ok(Module{ package: module.package, name: module.name, exports, locals})
+  Ok(Module{ package: module.package, name: module.name, functions })
 }
 
 trait Typed {
