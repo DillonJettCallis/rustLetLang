@@ -11,6 +11,32 @@ use std::rc::Rc;
 pub type LocalId = u16;
 pub type ConstantId = u32;
 
+pub struct BitApplication {
+  pub packages: HashMap<String, BitPackage>,
+  pub main: (String, String),
+}
+
+impl BitApplication {
+
+  pub fn new(main_package: String, main_module: String) -> BitApplication {
+    BitApplication{
+      packages: HashMap::new(),
+      main: (main_package, main_module)
+    }
+  }
+}
+
+pub struct BitPackage {
+  pub modules: HashMap<String, BitModule>,
+}
+
+impl BitPackage {
+
+  pub fn new() -> BitPackage {
+    BitPackage{modules: HashMap::new()}
+  }
+}
+
 pub struct BitModule {
   pub string_constants: Vec<String>,
   pub function_refs: Vec<FunctionRef>,
@@ -25,6 +51,9 @@ pub struct FunctionRef {
 }
 
 pub struct BitFunction {
+  pub package: String,
+  pub module: String,
+
   pub max_locals: LocalId,
   pub shape: Shape,
   pub body: Vec<Instruction>,

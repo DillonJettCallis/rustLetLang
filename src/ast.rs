@@ -154,6 +154,8 @@ pub struct NumberLiteralEx {
 }
 
 pub struct Module {
+  pub package: String,
+  pub name: String,
   pub exports: Vec<Export>,
   pub locals: Vec<FunctionDeclarationEx>,
 }

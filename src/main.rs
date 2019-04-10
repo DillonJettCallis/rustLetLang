@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use simple_error::SimpleError;
 
 use ast::Module;
-use bytecode::BitModule;
+use bytecode::{BitModule, BitPackage, BitApplication};
 use bytecode::BitFunction;
 use bytecode::FunctionRef;
 use bytecode::Instruction;
@@ -35,10 +35,14 @@ fn main() {
 }
 
 fn compile_test() -> Result<Value, SimpleError> {
-  let parsed = parser::parse("/home/dillon/projects/rustLetLang/test/basic.let")?;
-  let checked = typechecker::check_module(parsed)?;
-  let compiled = Compiler::compile(checked)?;
-  let machine = Machine::new(compiled);
+  let module_name = String::from("util");
+  let package_name = String::from("test");
+
+  let package = Compiler::compile_package("test", "/home/dillon/projects/rustLetLang/test")?;
+  let mut app = BitApplication::new(package_name.clone(), module_name);
+  app.packages.insert(package_name, package);
+
+  let machine = Machine::new(app);
 
   machine.run_main()
 }

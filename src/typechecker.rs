@@ -37,7 +37,7 @@ pub fn check_module(module: Module) -> Result<Module, SimpleError> {
     }
   }
 
-  Ok(Module{exports, locals})
+  Ok(Module{ package: module.package, name: module.name, exports, locals})
 }
 
 trait Typed {

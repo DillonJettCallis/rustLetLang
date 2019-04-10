@@ -27,13 +27,13 @@ impl Debug for RunFunction {
 }
 
 pub struct Machine {
-  app: BitModule,
+  app: BitApplication,
   core_functions: HashMap<String, Rc<RunFunction>>,
 }
 
 impl Machine {
 
-  pub fn new(app: BitModule) -> Machine {
+  pub fn new(app: BitApplication) -> Machine {
     let mut core_functions: HashMap<String, Rc<RunFunction>> = HashMap::new();
     core_functions.insert(String::from("Core.+"), Rc::new(float_op("Core.+", |l, r| l + r)));
     core_functions.insert(String::from("Core.-"), Rc::new(float_op("Core.-", |l, r| l - r)));
@@ -43,13 +43,21 @@ impl Machine {
   }
 
   pub fn run_main(&self) -> Result<Value, SimpleError> {
-    let main = self.app.functions.get("main")
+    let (ref main_package, ref main_module) = self.app.main;
+
+    let main = self.app.packages.get(main_package)
+      .and_then(|package| package.modules.get(main_module))
+      .and_then(|module| module.functions.get("main"))
       .ok_or_else(|| SimpleError::new("No main function"))?;
 
     main.execute(self, vec![])
   }
 
   pub fn execute(&self, func: &BitFunction, mut locals: Vec<Value>) -> Result<Value, SimpleError> {
+    let module = self.app.packages.get(&func.package)
+      .and_then(|package| package.modules.get(&func.module))
+      .ok_or_else(|| SimpleError::new("BitFunction lookup failed"))?;
+
     let mut index = 0usize;
     let mut stack: Vec<Value> = Vec::new();
     locals.resize(func.max_locals as usize, Value::Null);
@@ -85,7 +93,7 @@ impl Machine {
             LoadType::String => {
               let index = const_id as usize;
 
-              let value: &String = self.app.string_constants.get(index)
+              let value: &String = module.string_constants.get(index)
                 .ok_or_else(|| SimpleError::new("Invalid bytecode. Invalid String constant id"))?;
 
               stack.push(Value::String(Rc::new(value.clone())));
@@ -93,8 +101,8 @@ impl Machine {
             LoadType::Function => {
               let index = const_id as usize;
 
-              let func_ref = &self.app.function_refs[index];
-              let boxed = self.app.functions.get(&func_ref.name)
+              let func_ref = &module.function_refs[index];
+              let boxed = module.functions.get(&func_ref.name)
                 .ok_or_else(|| SimpleError::new("Invalid bytecode. Invalid Function constant id"))?
                 .clone();
 
@@ -121,11 +129,11 @@ impl Machine {
           locals[index] = value;
         },
         Instruction::CallStatic{func_id} => {
-          let func_ref: &FunctionRef = self.app.function_refs.get(func_id as usize)
+          let func_ref: &FunctionRef = module.function_refs.get(func_id as usize)
             .ok_or_else(|| SimpleError::new("Invalid bytecode. Invalid function id"))?;
 
           let func = self.core_functions.get(&func_ref.name)
-            .or_else(||self.app.functions.get(&func_ref.name))
+            .or_else(||module.functions.get(&func_ref.name))
             .ok_or_else(|| SimpleError::new("Invalid bytecode. Function with name not found"))?;
 
           let shape = func.get_shape();
@@ -150,7 +158,7 @@ impl Machine {
           }
         },
         Instruction::CallDynamic{shape_id} => {
-          let shape: &Shape = self.app.shape_refs.get(shape_id as usize)
+          let shape: &Shape = module.shape_refs.get(shape_id as usize)
             .ok_or_else(|| SimpleError::new("Invalid bytecode. Invalid Shape constant"))?;
 
           if let Shape::SimpleFunctionShape { args, result: _ } = shape {
@@ -184,11 +192,11 @@ impl Machine {
           }
         },
         Instruction::BuildClosure {param_count, func_id} => {
-          let func_ref: &FunctionRef = self.app.function_refs.get(func_id as usize)
+          let func_ref: &FunctionRef = module.function_refs.get(func_id as usize)
             .ok_or_else(|| SimpleError::new("Invalid bytecode. Invalid function id"))?;
 
           let func = self.core_functions.get(&func_ref.name)
-            .or_else(||self.app.functions.get(&func_ref.name))
+            .or_else(||module.functions.get(&func_ref.name))
             .ok_or_else(|| SimpleError::new("Invalid bytecode. Function with name not found"))?
             .clone();
 

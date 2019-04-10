@@ -6,8 +6,9 @@ use simple_error::*;
 
 use ast::*;
 use shapes::*;
+use std::path::Path;
 
-pub fn lex(src: &str) -> Result<Vec<Token>, SimpleError> {
+pub fn lex(src: &Path) -> Result<Vec<Token>, SimpleError> {
   let mut source = Lexer::new(src)?;
   let mut tokens: Vec<Token> = Vec::new();
 
@@ -24,10 +25,10 @@ pub fn lex(src: &str) -> Result<Vec<Token>, SimpleError> {
   Ok(tokens)
 }
 
-pub fn parse(src: &str) -> Result<Module, SimpleError> {
+pub fn parse(src: &Path, package: &str, name: &str) -> Result<Module, SimpleError> {
   let tokens = lex(src)?;
   let mut parser = Parser { tokens, index: 0 };
-  parser.parse_module()
+  parser.parse_module(package, name)
 }
 
 const SUM_OPS: &'static [&'static str] = &["+", "-"];
@@ -41,7 +42,7 @@ struct Parser {
 }
 
 impl Parser {
-  fn parse_module(&mut self) -> Result<Module, SimpleError> {
+  fn parse_module(&mut self, package: &str, name: &str) -> Result<Module, SimpleError> {
     let mut exports = Vec::new();
     let mut locals = Vec::new();
 
@@ -59,7 +60,7 @@ impl Parser {
           locals.push(self.parse_function(false)?);
         }
         "<EOF>" => {
-          return Ok(Module { exports, locals });
+          return Ok(Module { package: String::from(package), name: String::from(name), exports, locals });
         }
         _ => {
           return Err(SimpleError::new(format!("Unexpected token: '{}' {}", token.value, token.location.pretty())));
@@ -469,12 +470,12 @@ struct Lexer {
 }
 
 impl Lexer {
-  fn new(src: &str) -> Result<Lexer, SimpleError> {
+  fn new(src: &Path) -> Result<Lexer, SimpleError> {
     let file = File::open(src).map_err(SimpleError::from)?;
     let buff = BufReader::new(file);
     let reader = CharReader::new(buff);
 
-    Ok(Lexer { reader, src: String::from(src) })
+    Ok(Lexer { reader, src: String::from(src.to_str().ok_or_else(|| SimpleError::new("File has no name"))?) })
   }
 
   fn point(&self) -> Location {
