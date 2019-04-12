@@ -58,6 +58,8 @@ impl Machine {
       .and_then(|package| package.modules.get(&func.module))
       .ok_or_else(|| SimpleError::new("BitFunction lookup failed"))?;
 
+    func.debug(module)?;
+
     let mut index = 0usize;
     let mut stack: Vec<Value> = Vec::new();
     locals.resize(func.max_locals as usize, Value::Null);

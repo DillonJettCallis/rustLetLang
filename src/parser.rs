@@ -27,7 +27,7 @@ pub fn lex(src: &Path) -> Result<Vec<Token>, SimpleError> {
 
 pub fn parse(src: &Path, package: &str, name: &str) -> Result<Module, SimpleError> {
   let tokens = lex(src)?;
-  let mut parser = Parser { tokens, index: 0 };
+  let mut parser = Parser { tokens, index: 0, closure_id: 0 };
   parser.parse_module(package, name)
 }
 
@@ -39,6 +39,8 @@ const COMPARE_OPS: &'static [&'static str] = &["<", ">", "<=", ">="];
 struct Parser {
   tokens: Vec<Token>,
   index: usize,
+
+  closure_id: usize,
 }
 
 impl Parser {
@@ -158,7 +160,10 @@ impl Parser {
       body
     }));
 
-    Ok(FunctionDeclarationEx { result, loc, id: "<anon>".to_string(), args, body: block, context: FunctionContext::new(true, true) }.wrap())
+    let id = format!("$closure_{}", self.closure_id);
+    self.closure_id += 1;
+
+    Ok(FunctionDeclarationEx { result, loc, id, args, body: block, context: FunctionContext::new(true, true) }.wrap())
   }
 
   fn parse_statement(&mut self) -> Result<Expression, SimpleError> {

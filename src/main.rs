@@ -1,5 +1,6 @@
 extern crate bytebuffer;
 extern crate simple_error;
+extern crate core;
 
 use std::collections::HashMap;
 

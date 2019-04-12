@@ -4,7 +4,7 @@ use std::rc::Rc;
 
 use simple_error::SimpleError;
 
-use ast::AssignmentEx;
+use ast::{AssignmentEx, FunctionContext};
 use ast::BinaryOpEx;
 use ast::BlockEx;
 use ast::CallEx;
@@ -84,16 +84,16 @@ pub fn compile(module: Module) -> Result<BitModule, SimpleError> {
 }
 
 fn compile_module(core: CoreContext, module: Module) -> Result<BitModule, SimpleError> {
-  let mut context = ModuleContext::new(core, &module);
+  let mut module_context = ModuleContext::new(core, &module);
 
   for dec in &module.functions {
-    context.add_function_ref(&dec.ex.id, dec.ex.shape());
+    module_context.add_function_ref(&dec.ex.id, dec.ex.shape());
   }
 
   for dec in &module.functions {
-    let bit_func = compile_function(&mut context, &dec.ex)?;
+    let bit_func = compile_function(&mut module_context, &dec.ex)?;
 
-    context.functions.insert(dec.ex.id.clone(), Rc::new(bit_func));
+    module_context.functions.insert(dec.ex.id.clone(), Rc::new(bit_func));
   }
 
   let ModuleContext { 
@@ -102,7 +102,7 @@ fn compile_module(core: CoreContext, module: Module) -> Result<BitModule, Simple
     shape_refs, 
     functions, 
     .. 
-  } = context;
+  } = module_context;
 
   Ok(BitModule {
     string_constants,
@@ -113,7 +113,10 @@ fn compile_module(core: CoreContext, module: Module) -> Result<BitModule, Simple
 }
 
 fn compile_function(context: &mut ModuleContext, ex: &FunctionDeclarationEx) -> Result<BitFunction, SimpleError> {
-  context.reset(ex.args.len() as LocalId);
+  let package = context.package.clone();
+  let module = context.module.clone();
+
+  context.push_function();
 
   for closure in &ex.context.closures {
     context.store(closure);
@@ -130,11 +133,14 @@ fn compile_function(context: &mut ModuleContext, ex: &FunctionDeclarationEx) -> 
     body.push(Instruction::Return);
   }
 
-  return Ok(BitFunction {
-    package: context.package.clone(),
-    module: context.module.clone(),
+  let func_context = context.pop_function();
 
-    max_locals: context.max_locals + 1,
+  return Ok(BitFunction {
+    package,
+    module,
+    name: ex.id.clone(),
+
+    max_locals: func_context.max_locals + 1,
     shape: ex.shape(),
     body,
     source: vec![],
@@ -167,10 +173,10 @@ impl Compilable for FunctionDeclarationEx {
   fn compile(&self, context: &mut ModuleContext) -> Result<Vec<Instruction>, SimpleError> {
 
     if self.context.closures.is_empty() {
-      let full_id = format!("$closure:{}", context.gen_next_function_id());
-      let bit_func = compile_function(context, self)?;
+      let full_id = self.id.clone();
+      let bit_func = compile_function( context, self)?;
       let const_id = context.add_function_ref(&full_id, self.shape());
-      context.functions.insert(full_id, Rc::new(bit_func));
+      context.add_function(full_id, bit_func);
 
       let mut body = vec![Instruction::LoadConst {kind: LoadType::Function, const_id}];
 
@@ -199,10 +205,10 @@ impl Compilable for FunctionDeclarationEx {
         }
       }
 
-      let full_id = format!("$closure:{}", context.gen_next_function_id());
+      let full_id = self.id.clone();
       let bit_func = compile_function(context, self)?;
       let func_id = context.add_function_ref(&full_id, self.shape());
-      context.functions.insert(full_id, Rc::new(bit_func));
+      context.add_function(full_id, bit_func);
 
       body.push(Instruction::BuildClosure {param_count: self.context.closures.len() as LocalId, func_id});
 
@@ -287,13 +293,7 @@ impl Compilable for CallEx {
       body.append(&mut more);
     }
 
-    let func_shape = func.shape();
-
-    let shape_id = context.shape_refs.iter().position(|other| *other == func_shape)
-      .or_else(move || {
-        context.shape_refs.push(func_shape.clone());
-        Some(context.shape_refs.len() - 1)
-      }).unwrap() as u32;
+    let shape_id = context.lookup_shape(func.shape());
 
     body.push(Instruction::CallDynamic { shape_id });
     Ok(body)
@@ -324,7 +324,7 @@ impl Compilable for BlockEx {
 impl Compilable for StringLiteralEx {
   fn compile(&self, context: &mut ModuleContext) -> Result<Vec<Instruction>, SimpleError> {
     let StringLiteralEx{ shape, loc, value } = self;
-    let const_id = context.string_constant(value);
+    let const_id = context.lookup_string_constant(value);
 
     Ok(vec![Instruction::LoadConst { kind: LoadType::String, const_id }])
   }
@@ -374,10 +374,7 @@ struct ModuleContext {
   string_constant_map: HashMap<String, ConstantId>,
   string_constants: Vec<String>,
 
-  max_locals: u16,
-  local: Vec<FuncContext>,
-
-  generated_function_count: usize,
+  function_context: Vec<FuncContext>,
 }
 
 impl ModuleContext {
@@ -396,19 +393,15 @@ impl ModuleContext {
       string_constant_map: HashMap::new(),
       string_constants: Vec::new(),
 
-      max_locals: 0,
-      local: vec![FuncContext::new(0)],
-
-      generated_function_count: 0,
+      function_context: Vec::new(),
     }
   }
 
-  fn reset(&mut self, max_locals: u16) {
-    self.max_locals = max_locals;
-    self.local = vec![FuncContext::new(max_locals)];
-  }
-
   fn add_function_ref(&mut self, name: &str, shape: Shape) -> ConstantId {
+    if let Some((id, _)) = self.function_ref_map.get(name) {
+      return id.clone();
+    }
+
     let ref_size = self.function_ref_map.len() as ConstantId;
 
     let func_ref = FunctionRef { name: String::from(name), shape: shape.clone() };
@@ -427,8 +420,8 @@ impl ModuleContext {
   }
 
   fn lookup(&mut self, name: &str, loc: &Location) -> Result<Lookup, SimpleError> {
-    for local in self.local.iter().rev() {
-      if let Some(lookup) = local.lookup(name) {
+    for func in self.function_context.iter().rev() {
+      if let Some(lookup) = func.lookup(name) {
         return Ok(lookup);
       }
     }
@@ -445,7 +438,7 @@ impl ModuleContext {
     }
   }
 
-  fn string_constant(&mut self, s: &str) -> ConstantId {
+  fn lookup_string_constant(&mut self, s: &str) -> ConstantId {
     if let Some(id) = self.string_constant_map.get(s) {
       return id.clone();
     }
@@ -456,24 +449,36 @@ impl ModuleContext {
     id
   }
 
+  fn lookup_shape(&mut self, shape: Shape) -> ConstantId {
+    self.shape_refs.iter().position(|other| *other == shape)
+      .or_else(move || {
+        self.shape_refs.push(shape);
+        Some(self.shape_refs.len() - 1)
+      }).unwrap() as ConstantId
+  }
+
+  fn add_function(&mut self, id: String, func: BitFunction) {
+    self.functions.insert(id,  Rc::new(func));
+  }
+
+  fn push_function(&mut self) {
+    self.function_context.push(FuncContext::new());
+  }
+
+  fn pop_function(&mut self) -> FuncContext {
+    self.function_context.pop().unwrap()
+  }
+
   fn store(&mut self, id: &str) -> u16 {
-    self.local.last_mut().unwrap().store(id)
+    self.function_context.last_mut().unwrap().store(id)
   }
 
   fn push_scope(&mut self) {
-    self.local.push(FuncContext::new(self.max_locals));
+    self.function_context.last_mut().unwrap().push_scope()
   }
 
   fn pop_scope(&mut self) {
-    if let Some(last) = self.local.pop() {
-      self.max_locals = max(self.max_locals, last.max_locals);
-    }
-  }
-
-  fn gen_next_function_id(&mut self) -> usize {
-    let id = self.generated_function_count;
-    self.generated_function_count = id + 1;
-    id
+    self.function_context.last_mut().unwrap().pop_scope()
   }
 }
 
@@ -482,24 +487,64 @@ enum Lookup {
   Static(ConstantId),
 }
 
-struct FuncContext {
+struct FuncContext<> {
+  max_locals: u16,
+  local: Vec<BlockContext>,
+}
+
+impl FuncContext {
+
+  fn new() -> FuncContext {
+    FuncContext {
+      max_locals: 0,
+      local: vec![BlockContext::new(0)],
+    }
+  }
+
+  fn lookup(&self, name: &str) -> Option<Lookup> {
+    for local in self.local.iter().rev() {
+      if let Some(lookup) = local.lookup(name) {
+        return Some(lookup);
+      }
+    }
+
+    None
+  }
+
+  fn store(&mut self, id: &str) -> u16 {
+    self.local.last_mut().unwrap().store(id)
+  }
+
+  fn push_scope(&mut self) {
+    let last_local_index = self.local.last().unwrap().max_locals;
+    self.local.push(BlockContext::new(last_local_index));
+  }
+
+  fn pop_scope(&mut self) {
+    if let Some(last) = self.local.pop() {
+      self.max_locals = max(self.max_locals, last.max_locals);
+    }
+  }
+}
+
+struct BlockContext {
   max_locals: u16,
   locals: HashMap<String, u16>,
 }
 
-impl FuncContext {
-  fn new(max_locals: u16) -> FuncContext {
-    FuncContext {
+impl BlockContext {
+  fn new(max_locals: u16) -> BlockContext {
+    BlockContext {
       max_locals,
       locals: HashMap::new(),
     }
   }
 
   fn store(&mut self, id: &str) -> u16 {
-    let local_id = self.locals.len() as u16;
+    let local_id = self.max_locals;
+    self.max_locals += 1;
 
     self.locals.insert(String::from(id), local_id);
-    self.max_locals = max(self.max_locals, local_id);
 
     local_id
   }
