@@ -26,6 +26,7 @@ mod bytecode;
 mod interpreter;
 mod runtime;
 mod compiler;
+mod optimize;
 
 fn main() {
   match compile_test() {

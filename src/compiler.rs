@@ -30,6 +30,8 @@ use std::fs::{self, DirEntry};
 use std::path::{Path, PathBuf};
 use parser::parse;
 use typechecker;
+use optimize::Optimizer;
+use core::borrow::BorrowMut;
 
 pub fn compile_package(name: &str, base_dir: &str) -> Result<BitPackage, SimpleError> {
   let raw_modules = find_modules(base_dir, name)?;
@@ -90,10 +92,12 @@ fn compile_module(core: CoreContext, module: Module) -> Result<BitModule, Simple
     module_context.add_function_ref(&dec.ex.id, dec.ex.shape());
   }
 
+  let mut raw_funcs = HashMap::new();
+
   for dec in &module.functions {
     let bit_func = compile_function(&mut module_context, &dec.ex)?;
 
-    module_context.functions.insert(dec.ex.id.clone(), Rc::new(bit_func));
+    raw_funcs.insert(dec.ex.id.clone(), bit_func);
   }
 
   let ModuleContext { 
@@ -104,12 +108,21 @@ fn compile_module(core: CoreContext, module: Module) -> Result<BitModule, Simple
     .. 
   } = module_context;
 
-  Ok(BitModule {
+  let mut raw_module = BitModule {
     string_constants,
     function_refs,
     functions,
     shape_refs,
-  })
+  };
+
+  let opts = Optimizer::new();
+
+  for (name, mut func) in raw_funcs {
+    opts.optimize(&mut raw_module, &mut func);
+    raw_module.functions.insert(name, Rc::new(func));
+  }
+
+  Ok(raw_module)
 }
 
 fn compile_function(context: &mut ModuleContext, ex: &FunctionDeclarationEx) -> Result<BitFunction, SimpleError> {
