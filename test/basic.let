@@ -7,7 +7,7 @@ public fun main(): Float = {
 }
 
 fun higher(op: {Float, Float -> Float}): Float = {
-  let first = op(2, 4)
+  let first = op(2, op(4, 5))
   let second = op(first, 3)
   let third = 4 + 3 * 1 - second
   let fourth = second * third

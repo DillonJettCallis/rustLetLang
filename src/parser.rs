@@ -243,10 +243,10 @@ impl Parser {
       let mut args = Vec::new();
 
       if !self.check_literal(")") {
-        args.push(self.parse_block()?);
+        args.push(self.parse_expression()?);
 
         while self.check_literal(",") {
-          args.push(self.parse_block()?);
+          args.push(self.parse_expression()?);
         }
 
         self.expect_literal(")")?;
