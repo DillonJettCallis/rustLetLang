@@ -132,7 +132,7 @@ fn compile_function(context: &mut ModuleContext, ex: &FunctionDeclarationEx) -> 
   context.push_function();
 
   for closure in &ex.context.closures {
-    context.store(closure);
+    context.store(&closure.id);
   }
 
   for arg in &ex.args {
@@ -203,7 +203,7 @@ impl Compilable for FunctionDeclarationEx {
       let mut body = Vec::new();
 
       for local in &self.context.closures {
-        let lookup = context.lookup(local, &self.loc)?;
+        let lookup = context.lookup(&local.id, &self.loc)?;
 
         match lookup {
           Lookup::Local(local) => {
@@ -417,9 +417,9 @@ impl ModuleContext {
 
     let ref_size = self.function_ref_map.len() as ConstantId;
 
-    let func_ref = FunctionRef { name: String::from(name), shape: shape.clone() };
-    self.function_ref_map.insert(String::from(name), (ref_size, func_ref));
-    self.function_refs.push(FunctionRef { name: String::from(name), shape });
+    let func_ref = FunctionRef { package: self.package.clone(), module: self.module.clone(), name: String::from(name), shape: shape.clone() };
+    self.function_ref_map.insert(String::from(name), (ref_size, func_ref.clone()));
+    self.function_refs.push(func_ref);
 
     ref_size
   }

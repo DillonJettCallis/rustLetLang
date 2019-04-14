@@ -64,8 +64,25 @@ impl BitModule {
 
 #[derive(Clone)]
 pub struct FunctionRef {
+  pub package: String,
+  pub module: String,
   pub name: String,
   pub shape: Shape,
+}
+
+impl FunctionRef {
+
+  pub fn pretty(&self) -> String {
+    format!("{}::{}.{}", self.package, self.module, self.name)
+  }
+
+  pub fn result(&self) -> Shape {
+    match &self.shape {
+      Shape::SimpleFunctionShape{ result, ..} => *result.clone(),
+      _ => self.shape.clone()
+    }
+  }
+
 }
 
 pub struct BitFunction {

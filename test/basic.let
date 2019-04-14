@@ -1,9 +1,4 @@
 
-
-
-
-
-
 public fun main(): Float = {
     let outside = 2;
 

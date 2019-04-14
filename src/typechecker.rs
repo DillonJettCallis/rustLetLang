@@ -276,7 +276,7 @@ fn verify_function_declaration(parameters: Vec<Parameter>, expected: Shape, loc:
 struct Scope {
   static_scope: HashMap<String, Shape>,
   block_stack: Vec<Vec<HashMap<String, Shape>>>,
-  closures: Vec<Vec<String>>,
+  closures: Vec<Vec<Parameter>>,
 }
 
 impl Scope {
@@ -315,7 +315,13 @@ impl Scope {
       for scope in block_scope {
         if scope.contains_key(id) {
           if !first {
-            self.closures.last_mut().expect("closures should never be empty!").push(id.clone());
+            let shape = scope.get(id).unwrap();
+            let param = Parameter {
+              id: id.clone(),
+              shape: shape.clone(),
+            };
+
+            self.closures.last_mut().expect("closures should never be empty!").push(param);
           }
 
           return Ok(scope[id].clone());
@@ -345,7 +351,7 @@ impl Scope {
     self.closures.push(Vec::new());
   }
 
-  fn destroy_function_scope(&mut self) -> Vec<String> {
+  fn destroy_function_scope(&mut self) -> Vec<Parameter> {
     self.block_stack.pop();
     self.closures.pop()
       .expect("closures should never be empty!")

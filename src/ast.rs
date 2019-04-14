@@ -64,7 +64,7 @@ impl Expression {
 pub struct FunctionContext {
   pub is_lambda: bool,
   pub is_local: bool,
-  pub closures: Vec<String>,
+  pub closures: Vec<Parameter>,
 }
 
 impl FunctionContext {
@@ -76,7 +76,7 @@ impl FunctionContext {
     }
   }
 
-  pub fn set_closures(&self, closures: Vec<String>) -> FunctionContext {
+  pub fn set_closures(&self, closures: Vec<Parameter>) -> FunctionContext {
     FunctionContext {
       is_local: self.is_local,
       is_lambda: self.is_lambda,
@@ -89,6 +89,14 @@ impl FunctionContext {
 pub struct Parameter {
   pub id: String,
   pub shape: Shape,
+}
+
+impl Parameter {
+
+  pub fn pretty(&self) -> String {
+    format!("{}: {}", self.id, self.shape.pretty())
+  }
+
 }
 
 pub struct FunctionDeclarationEx {
