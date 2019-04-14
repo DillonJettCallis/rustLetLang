@@ -3,13 +3,13 @@ public fun main(): Float = {
     let outside = 2;
 
     let x = higher({a, b -> Float => a + b * outside});
-    x
+    x + outside
 }
 
 fun higher(op: {Float, Float -> Float}): Float = {
   let first = op(2, 4)
   let second = op(first, 3)
   let third = 4 + 3 * 1 - second
-  let fourth = first + second * third
+  let fourth = second * third
   op(fourth, 2)
 }
