@@ -1,10 +1,13 @@
+use core::borrow::BorrowMut;
 use std::cmp::max;
 use std::collections::HashMap;
+use std::fs::{self, DirEntry};
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use simple_error::SimpleError;
 
-use ast::{AssignmentEx, FunctionContext};
+use ast::{AssignmentEx, FunctionContext, Parameter};
 use ast::BinaryOpEx;
 use ast::BlockEx;
 use ast::CallEx;
@@ -23,15 +26,12 @@ use bytecode::Instruction;
 use bytecode::LoadType;
 use bytecode::LocalId;
 use interpreter::RunFunction;
+use ir::{compile_ir_module, IrModule, IrFunction, Ir};
+use optimize::Optimizer;
+use parser::parse;
 use shapes::Shape;
 use shapes::shape_float;
-
-use std::fs::{self, DirEntry};
-use std::path::{Path, PathBuf};
-use parser::parse;
 use typechecker;
-use optimize::Optimizer;
-use core::borrow::BorrowMut;
 
 pub fn compile_package(name: &str, base_dir: &str) -> Result<BitPackage, SimpleError> {
   let raw_modules = find_modules(base_dir, name)?;
@@ -40,7 +40,8 @@ pub fn compile_package(name: &str, base_dir: &str) -> Result<BitPackage, SimpleE
 
   for parsed in raw_modules {
     let checked = typechecker::check_module(parsed)?;
-    modules.insert(checked.name.clone(), compile(checked)?);
+    let compiled = compile_ir_module(&checked)?;
+    modules.insert(checked.name.clone(), compile(compiled)?);
   }
 
   Ok(BitPackage {
@@ -79,493 +80,153 @@ fn find_modules(base: &str, package: &str) -> Result<Vec<Module>, SimpleError> {
   Ok(modules)
 }
 
-pub fn compile(module: Module) -> Result<BitModule, SimpleError> {
-  let core = CoreContext::new();
+pub fn compile(module: IrModule) -> Result<BitModule, SimpleError> {
+  let mut context = ModuleContext::new();
+  let mut functions = HashMap::<String, Rc<RunFunction>>::new();
 
-  compile_module(core, module)
-}
+  for (name, raw_func) in &module.functions {
+    let mut func_context = FuncContext::new(&raw_func.args);
 
-fn compile_module(core: CoreContext, module: Module) -> Result<BitModule, SimpleError> {
-  let mut module_context = ModuleContext::new(core, &module);
+    let body = compile_block(&mut context, &mut func_context, &raw_func.body);
 
-  for dec in &module.functions {
-    module_context.add_function_ref(&dec.ex.id, dec.ex.shape());
+    functions.insert(name.clone(), Rc::new(BitFunction {
+      package: module.package.clone(),
+      module: module.name.clone(),
+      name: name.clone(),
+
+      max_locals: func_context.max_locals,
+      shape: raw_func.shape.clone(),
+      body,
+      source: Vec::new(),
+    }));
   }
 
-  let mut raw_funcs = HashMap::new();
+  let ModuleContext{function_refs, shape_refs, string_constants} = context;
 
-  for dec in &module.functions {
-    let bit_func = compile_function(&mut module_context, &dec.ex)?;
-
-    raw_funcs.insert(dec.ex.id.clone(), bit_func);
-  }
-
-  let ModuleContext { 
-    string_constants, 
-    function_refs, 
-    shape_refs, 
-    functions, 
-    .. 
-  } = module_context;
-
-  let mut raw_module = BitModule {
+  Ok(BitModule {
     string_constants,
     function_refs,
-    functions,
     shape_refs,
-  };
-
-  let opts = Optimizer::new();
-
-  for (name, mut func) in raw_funcs {
-    opts.optimize(&mut raw_module, &mut func);
-    raw_module.functions.insert(name, Rc::new(func));
-  }
-
-  Ok(raw_module)
+    functions,
+  })
 }
 
-fn compile_function(context: &mut ModuleContext, ex: &FunctionDeclarationEx) -> Result<BitFunction, SimpleError> {
-  let package = context.package.clone();
-  let module = context.module.clone();
+fn compile_block(context: &mut ModuleContext, func: &mut FuncContext, block: &Vec<Ir>) -> Vec<Instruction> {
+  let mut body = Vec::new();
 
-  context.push_function();
+  for next in block {
+    match next {
+      Ir::NoOp => body.push(Instruction::NoOp),
+      Ir::Duplicate => body.push(Instruction::Duplicate),
+      Ir::Pop => body.push(Instruction::Pop),
+      Ir::Swap => body.push(Instruction::Swap),
+      Ir::LoadConstNull => body.push(Instruction::LoadConstNull),
+      Ir::LoadConstString { value } => body.push(Instruction::LoadConst{kind: LoadType::String, const_id: context.lookup_string_constant(value)}),
+      Ir::LoadConstFunction { value } => body.push(Instruction::LoadConst{kind: LoadType::Function, const_id: context.lookup_function_ref(value)}),
+      Ir::LoadConstFloat { value } => body.push(Instruction::LoadConstFloat {value: *value}),
+      Ir::LoadValue { local } => body.push(Instruction::LoadValue {local: func.lookup_local(local)}),
+      Ir::StoreValue { local } => body.push(Instruction::StoreValue {local: func.lookup_local(local)}),
+      Ir::CallStatic { func } => body.push(Instruction::CallStatic {func_id: context.lookup_function_ref(func) }),
+      Ir::CallDynamic { param_count } => body.push(Instruction::CallDynamic {param_count: *param_count}),
+      Ir::BuildClosure { param_count, func } => body.push(Instruction::BuildClosure {param_count: *param_count, func_id: context.lookup_function_ref(func) }),
+      Ir::Return => body.push(Instruction::Return),
+      Ir::Branch{then_block, else_block} => {
 
-  for closure in &ex.context.closures {
-    context.store(&closure.id);
-  }
+        let mut then_body = compile_block(context, func, then_block);
+        let mut else_body = compile_block(context, func, else_block);
 
-  for arg in &ex.args {
-    context.store(&arg.id);
-  }
+        then_body.push(Instruction::Jump {jump: else_body.len() as i32});
 
-  let mut body = compile_expression(context, &ex.body)?;
-
-  // if we don't end with a return, add one anyway.
-  if let Some(Instruction::Return) = body.last() {} else {
-    body.push(Instruction::Return);
-  }
-
-  let func_context = context.pop_function();
-
-  return Ok(BitFunction {
-    package,
-    module,
-    name: ex.id.clone(),
-
-    max_locals: func_context.max_locals + 1,
-    shape: ex.shape(),
-    body,
-    source: vec![],
-  });
-}
-
-fn compile_expression(context: &mut ModuleContext, ex: &Expression) -> Result<Vec<Instruction>, SimpleError> {
-  match ex {
-    Expression::FunctionDeclaration(ex) => ex.compile( context),
-    Expression::Assignment(ex) => ex.compile( context),
-    Expression::Variable(ex) => ex.compile( context),
-    Expression::BinaryOp(ex) => ex.compile( context),
-    Expression::Call(ex) => ex.compile( context),
-    Expression::Block(ex) => ex.compile( context),
-    Expression::StringLiteral(ex) => ex.compile( context),
-    Expression::NumberLiteral(ex) => ex.compile( context),
-
-    _ => unimplemented!()
-  }
-}
-
-
-trait Compilable {
-
-  fn compile(&self, context: &mut ModuleContext) -> Result<Vec<Instruction>, SimpleError>;
-
-}
-
-impl Compilable for FunctionDeclarationEx {
-  fn compile(&self, context: &mut ModuleContext) -> Result<Vec<Instruction>, SimpleError> {
-
-    if self.context.closures.is_empty() {
-      let full_id = self.id.clone();
-      let bit_func = compile_function( context, self)?;
-      let const_id = context.add_function_ref(&full_id, self.shape());
-      context.add_function(full_id, bit_func);
-
-      let mut body = vec![Instruction::LoadConst {kind: LoadType::Function, const_id}];
-
-      if !self.context.is_lambda {
-        let local = context.store(&self.id);
-        body.push(Instruction::StoreValue { local });
-      }
-
-      return Ok(body);
-    } else {
-      let mut body = Vec::new();
-
-      for local in &self.context.closures {
-        let lookup = context.lookup(&local.id, &self.loc)?;
-
-        match lookup {
-          Lookup::Local(local) => {
-            body.push(Instruction::LoadValue { local })
-          }
-          Lookup::Static(const_id) => {
-            body.push(Instruction::LoadConst {
-              kind: LoadType::Function,
-              const_id,
-            })
-          }
-        }
-      }
-
-      let full_id = self.id.clone();
-      let bit_func = compile_function(context, self)?;
-      let func_id = context.add_function_ref(&full_id, self.shape());
-      context.add_function(full_id, bit_func);
-
-      body.push(Instruction::BuildClosure {param_count: self.context.closures.len() as LocalId, func_id});
-
-      if !self.context.is_lambda {
-        let local = context.store(&self.id);
-        body.push(Instruction::StoreValue { local });
-      }
-
-      return Ok(body);
+        body.push(Instruction::IfTrue {jump: then_body.len() as i32});
+        body.append(&mut then_body);
+        body.append(&mut else_body);
+      },
+      Ir::Debug => body.push(Instruction::Debug),
+      Ir::Error => body.push(Instruction::Error),
+      Ir::FreeLocal {local} =>func.free(local),
     }
   }
-}
 
-impl Compilable for AssignmentEx {
-  fn compile(&self, context: &mut ModuleContext) -> Result<Vec<Instruction>, SimpleError> {
-    let AssignmentEx{ shape, loc, id, body } = self;
-    let mut assign = compile_expression(context, body)?;
-    let local = context.store(id);
-    assign.push(Instruction::StoreValue { local });
-    return Ok(assign);
-  }
-}
-
-impl Compilable for VariableEx {
-  fn compile(&self, context: &mut ModuleContext) -> Result<Vec<Instruction>, SimpleError> {
-    let VariableEx{ shape, loc, id } = self;
-    let lookup = context.lookup(id, loc)?;
-
-    match lookup {
-      Lookup::Local(local) => {
-        Ok(vec![Instruction::LoadValue { local }])
-      }
-      Lookup::Static(const_id) => {
-        Ok(vec![Instruction::LoadConst {
-          kind: LoadType::Function,
-          const_id,
-        }])
-      }
-    }
-  }
-}
-
-impl Compilable for BinaryOpEx {
-  fn compile(&self, context: &mut ModuleContext) -> Result<Vec<Instruction>, SimpleError> {
-    let BinaryOpEx{ shape, loc, op, left, right } = self;
-    let mut body = compile_expression(context, left)?;
-    let mut other = compile_expression(context, right)?;
-    body.append(&mut other);
-
-    let id = format!("Core.{}", op);
-    if let Lookup::Static(func_id) = context.lookup(&id, loc)? {
-      body.push(Instruction::CallStatic { func_id });
-      return Ok(body);
-    } else {
-      return Err(SimpleError::new(format!("Could not look up Core operator function {}", op)));
-    }
-  }
-}
-
-impl Compilable for CallEx {
-  fn compile(&self, context: &mut ModuleContext) -> Result<Vec<Instruction>, SimpleError> {
-    let CallEx{ shape, loc, func, args } = self;
-    let mut body = Vec::new();
-
-    if let Expression::Variable(var) = func {
-      if let Lookup::Static(func_id) = context.lookup(&var.id, loc)? {
-        for arg in args {
-          let mut more = compile_expression(context, arg)?;
-          body.append(&mut more);
-        }
-
-        body.push(Instruction::CallStatic { func_id });
-        return Ok(body);
-      }
-    }
-
-    let mut function = compile_expression(context, func)?;
-    body.append(&mut function);
-
-    for arg in args {
-      let mut more = compile_expression(context, arg)?;
-      body.append(&mut more);
-    }
-
-    body.push(Instruction::CallDynamic { param_count: args.len() as LocalId });
-    Ok(body)
-  }
-}
-
-impl Compilable for BlockEx {
-  fn compile(&self, context: &mut ModuleContext) -> Result<Vec<Instruction>, SimpleError> {
-    let BlockEx{ shape, loc, body } = self;
-    context.push_scope();
-    let mut content: Vec<Instruction> = Vec::new();
-
-    for next in body {
-      let mut next_content = compile_expression(context, next)?;
-      content.append(&mut next_content);
-    }
-
-    if content.is_empty() {
-      // If the block is empty, return a Null so there is something there.
-      content.push(Instruction::LoadConstNull)
-    }
-
-    context.pop_scope();
-    Ok(content)
-  }
-}
-
-impl Compilable for StringLiteralEx {
-  fn compile(&self, context: &mut ModuleContext) -> Result<Vec<Instruction>, SimpleError> {
-    let StringLiteralEx{ shape, loc, value } = self;
-    let const_id = context.lookup_string_constant(value);
-
-    Ok(vec![Instruction::LoadConst { kind: LoadType::String, const_id }])
-  }
-}
-
-impl Compilable for NumberLiteralEx {
-  fn compile(&self, context: &mut ModuleContext) -> Result<Vec<Instruction>, SimpleError> {
-    Ok(vec![Instruction::LoadConstFloat { value: self.value.clone() }])
-  }
-}
-
-struct CoreContext {
-  function_map: HashMap<String, Shape>,
-}
-
-impl CoreContext {
-  fn new() -> CoreContext {
-    let mut function_map = HashMap::new();
-    let float_op = Shape::SimpleFunctionShape {
-      args: vec![shape_float(), shape_float()],
-      result: Box::new(shape_float()),
-    };
-
-    function_map.insert(String::from("Core.+"), float_op.clone());
-    function_map.insert(String::from("Core.-"), float_op.clone());
-    function_map.insert(String::from("Core.*"), float_op.clone());
-    function_map.insert(String::from("Core./"), float_op.clone());
-
-    return CoreContext {
-      function_map
-    };
-  }
+  body
 }
 
 struct ModuleContext {
-  core: CoreContext,
-  package: String,
-  module: String,
-
-  functions: HashMap<String, Rc<RunFunction>>,
-
-  function_ref_map: HashMap<String, (ConstantId, FunctionRef)>,
   function_refs: Vec<FunctionRef>,
-
   shape_refs: Vec<Shape>,
-
-  string_constant_map: HashMap<String, ConstantId>,
   string_constants: Vec<String>,
-
-  function_context: Vec<FuncContext>,
 }
 
 impl ModuleContext {
-  fn new(core: CoreContext, module: &Module) -> ModuleContext {
+  fn new() -> ModuleContext {
     ModuleContext {
-      core,
-      package: module.package.clone(),
-      module: module.name.clone(),
-      functions: HashMap::new(),
-
-      function_ref_map: HashMap::new(),
       function_refs: Vec::new(),
-
       shape_refs: Vec::new(),
-
-      string_constant_map: HashMap::new(),
       string_constants: Vec::new(),
-
-      function_context: Vec::new(),
     }
   }
 
-  fn add_function_ref(&mut self, name: &str, shape: Shape) -> ConstantId {
-    if let Some((id, _)) = self.function_ref_map.get(name) {
-      return id.clone();
-    }
-
-    let ref_size = self.function_ref_map.len() as ConstantId;
-
-    let func_ref = FunctionRef { package: self.package.clone(), module: self.module.clone(), name: String::from(name), shape: shape.clone() };
-    self.function_ref_map.insert(String::from(name), (ref_size, func_ref.clone()));
-    self.function_refs.push(func_ref);
-
-    ref_size
+  fn lookup_function_ref(&mut self, func: &FunctionRef) -> ConstantId {
+    ModuleContext::lookup(&mut self.function_refs, func) as ConstantId
   }
 
-  fn lookup_core(&self, name: &str) -> Option<Shape> {
-    if let Some(shape) = self.core.function_map.get(name) {
-      Some(shape.clone())
-    } else {
-      None
-    }
+  fn lookup_string_constant(&mut self, s: &String) -> ConstantId {
+    ModuleContext::lookup(&mut self.string_constants, s) as ConstantId
   }
 
-  fn lookup(&mut self, name: &str, loc: &Location) -> Result<Lookup, SimpleError> {
-    for func in self.function_context.iter().rev() {
-      if let Some(lookup) = func.lookup(name) {
-        return Ok(lookup);
-      }
-    }
-
-    if let Some((func_id, _)) = self.function_ref_map.get(name) {
-      return Ok(Lookup::Static(func_id.clone()));
-    }
-
-    if let Some(shape) = self.lookup_core(name) {
-      let ref_size = self.add_function_ref(name, shape);
-      return Ok(Lookup::Static(ref_size));
-    } else {
-      return loc.fail(&format!("Variable '{}' not found in compiler context", name));
-    }
+  fn lookup_shape(&mut self, shape: &Shape) -> ConstantId {
+    ModuleContext::lookup(&mut self.shape_refs, shape) as ConstantId
   }
 
-  fn lookup_string_constant(&mut self, s: &str) -> ConstantId {
-    if let Some(id) = self.string_constant_map.get(s) {
-      return id.clone();
-    }
-
-    let id = self.string_constant_map.len() as ConstantId;
-    self.string_constant_map.insert(s.to_string(), id);
-    self.string_constants.push(s.to_string());
-    id
-  }
-
-  fn lookup_shape(&mut self, shape: Shape) -> ConstantId {
-    self.shape_refs.iter().position(|other| *other == shape)
+  fn lookup<T: Eq + Clone>(col: &mut Vec<T>, next: &T) -> usize {
+    col.iter().position(|other| *other == *next)
       .or_else(move || {
-        self.shape_refs.push(shape);
-        Some(self.shape_refs.len() - 1)
-      }).unwrap() as ConstantId
-  }
-
-  fn add_function(&mut self, id: String, func: BitFunction) {
-    self.functions.insert(id,  Rc::new(func));
-  }
-
-  fn push_function(&mut self) {
-    self.function_context.push(FuncContext::new());
-  }
-
-  fn pop_function(&mut self) -> FuncContext {
-    self.function_context.pop().unwrap()
-  }
-
-  fn store(&mut self, id: &str) -> u16 {
-    self.function_context.last_mut().unwrap().store(id)
-  }
-
-  fn push_scope(&mut self) {
-    self.function_context.last_mut().unwrap().push_scope()
-  }
-
-  fn pop_scope(&mut self) {
-    self.function_context.last_mut().unwrap().pop_scope()
+        col.push(next.clone());
+        Some(col.len() - 1)
+      }).unwrap()
   }
 }
 
-enum Lookup {
-  Local(LocalId),
-  Static(ConstantId),
-}
-
-struct FuncContext<> {
-  max_locals: u16,
-  local: Vec<BlockContext>,
+struct FuncContext {
+  max_locals: LocalId,
+  free_slots: Vec<LocalId>,
+  locals: HashMap<String, LocalId>,
 }
 
 impl FuncContext {
 
-  fn new() -> FuncContext {
+  fn new(args: &Vec<Parameter>) -> FuncContext {
+    let mut locals = HashMap::new();
+
+    let mut index = 0u16;
+    for arg in args {
+      locals.insert(arg.id.clone(), index);
+      index += 1;
+    }
+
     FuncContext {
-      max_locals: 0,
-      local: vec![BlockContext::new(0)],
+      max_locals: index,
+      free_slots: Vec::new(),
+      locals,
     }
   }
 
-  fn lookup(&self, name: &str) -> Option<Lookup> {
-    for local in self.local.iter().rev() {
-      if let Some(lookup) = local.lookup(name) {
-        return Some(lookup);
-      }
-    }
-
-    None
+  fn lookup_local(&mut self, name: &String) -> LocalId {
+    self.locals.get(name)
+      .map(|i| *i)
+      .unwrap_or_else(move || {
+        let id = self.free_slots.pop().unwrap_or_else(|| {
+          let next = self.max_locals;
+          self.max_locals += 1;
+          next
+        });
+        self.locals.insert(name.clone(), id);
+        id
+      })
   }
 
-  fn store(&mut self, id: &str) -> u16 {
-    self.local.last_mut().unwrap().store(id)
+  fn free(&mut self, name: &String) {
+    let id = self.lookup_local(name);
+    self.free_slots.push(id);
   }
 
-  fn push_scope(&mut self) {
-    let last_local_index = self.local.last().unwrap().max_locals;
-    self.local.push(BlockContext::new(last_local_index));
-  }
-
-  fn pop_scope(&mut self) {
-    if let Some(last) = self.local.pop() {
-      self.max_locals = max(self.max_locals, last.max_locals);
-    }
-  }
 }
-
-struct BlockContext {
-  max_locals: u16,
-  locals: HashMap<String, u16>,
-}
-
-impl BlockContext {
-  fn new(max_locals: u16) -> BlockContext {
-    BlockContext {
-      max_locals,
-      locals: HashMap::new(),
-    }
-  }
-
-  fn store(&mut self, id: &str) -> u16 {
-    let local_id = self.max_locals;
-    self.max_locals += 1;
-
-    self.locals.insert(String::from(id), local_id);
-
-    local_id
-  }
-
-  fn lookup(&self, id: &str) -> Option<Lookup> {
-    if let Some(local_id) = self.locals.get(id) {
-      Some(Lookup::Local(local_id.clone()))
-    } else {
-      None
-    }
-  }
-}
-

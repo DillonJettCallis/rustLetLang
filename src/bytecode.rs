@@ -52,7 +52,7 @@ impl BitModule {
   fn pretty_constant(&self, kind: &LoadType, id: ConstantId) -> String {
     match kind {
       LoadType::String => self.string_constants[id as usize].clone(),
-      LoadType::Function => self.function_refs[id as usize].name.clone()
+      LoadType::Function => self.function_refs[id as usize].pretty()
     }
   }
 
@@ -62,7 +62,7 @@ impl BitModule {
 
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct FunctionRef {
   pub package: String,
   pub module: String,

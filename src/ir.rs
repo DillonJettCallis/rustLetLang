@@ -1,12 +1,14 @@
-use bytecode::{FunctionRef, LocalId};
-use shapes::{Shape, shape_float};
 use std::collections::HashMap;
-use ast::{Expression, StringLiteralEx, NumberLiteralEx, BlockEx, CallEx, Location, BinaryOpEx, VariableEx, AssignmentEx, FunctionDeclarationEx, Module, Parameter};
-use simple_error::SimpleError;
 use std::hash::Hash;
-use ir::ScopeLookup::Local;
-use std::io::Write;
 use std::io;
+use std::io::Write;
+
+use simple_error::SimpleError;
+
+use ast::{AssignmentEx, BinaryOpEx, BlockEx, CallEx, Expression, FunctionDeclarationEx, Location, Module, NumberLiteralEx, Parameter, StringLiteralEx, VariableEx};
+use bytecode::{FunctionRef, LocalId};
+use ir::ScopeLookup::Local;
+use shapes::{Shape, shape_float};
 
 pub struct IrModule {
   pub package: String,
@@ -32,7 +34,8 @@ impl IrModule {
 pub struct IrFunction {
   pub func_ref: FunctionRef,
   pub args: Vec<Parameter>,
-  pub blocks: HashMap<String, Vec<Ir>>,
+  pub body: Vec<Ir>,
+  pub shape: Shape,
 }
 
 impl IrFunction {
@@ -49,12 +52,7 @@ impl IrFunction {
       .map_err(|err| SimpleError::from(err))?;
 
 
-    for (label, block) in &self.blocks {
-      writer.write_all(format!("    {}:\n", label).as_bytes())
-        .map_err(|err| SimpleError::from(err))?;
-
-      Ir::pretty_print(block, writer)?;
-    }
+    Ir::pretty_print(&self.body, "    ", writer)?;
 
     writer.write_all(b"\n")
       .map_err(|err| SimpleError::from(err))
@@ -95,20 +93,20 @@ pub enum Ir {
   },
   Return,
   Branch {
-    then_block: String,
-    else_block: String,
-  },
-  Jump {
-    block: String
+    then_block: Vec<Ir>,
+    else_block: Vec<Ir>,
   },
   Debug,
   Error,
+  FreeLocal {
+    local: String,
+  }
 }
 
 impl Ir {
-  pub fn pretty_print<Writer: Write>(block: &Vec<Ir>, writer: &mut Writer) -> Result<(), SimpleError> {
+  pub fn pretty_print<Writer: Write>(block: &Vec<Ir>, indent: &str, writer: &mut Writer) -> Result<(), SimpleError> {
     for (index, next) in block.iter().enumerate() {
-      writer.write_all(format!("      {}: ", index).as_bytes()).map_err(|err| SimpleError::from(err))?;
+      writer.write_all(format!("{}{}: ", indent, index).as_bytes()).map_err(|err| SimpleError::from(err))?;
 
       match next {
         Ir::NoOp => writer.write_all(b"NoOp"),
@@ -125,10 +123,17 @@ impl Ir {
         Ir::CallDynamic { param_count } => writer.write_all(format!("CallDynamic({})", param_count).as_bytes()),
         Ir::BuildClosure { param_count, func } => writer.write_all(format!("BuildClosure({}, '{}')", *param_count, func.pretty()).as_bytes()),
         Ir::Return => writer.write_all(b"Return"),
-        Ir::Branch{then_block, else_block} => writer.write_all(format!("IfEqual({}, {})", then_block, else_block).as_bytes()),
-        Ir::Jump { block } => writer.write_all(format!("Jump({})", block).as_bytes()),
+        Ir::Branch{then_block, else_block} => {
+          let inner_indent = format!("{}    ", indent);
+          writer.write_all(format!("Branch(\n{}  then_block:\n", indent).as_bytes());
+          Ir::pretty_print(then_block, &inner_indent, writer)?;
+          writer.write_all(format!("{}  else_block:\n", indent).as_bytes());
+          Ir::pretty_print(else_block, &inner_indent, writer)?;
+          Ok(())
+        },
         Ir::Debug => writer.write_all(b"Debug"),
         Ir::Error => writer.write_all(b"Error"),
+        Ir::FreeLocal {local} => writer.write_all(format!("FreeLocal({})", local).as_bytes())
       }.map_err(|err| SimpleError::from(err))?;
 
       writer.write_all(b"\n").map_err(|err| SimpleError::from(err))?;
@@ -406,22 +411,12 @@ impl IrModuleContext {
     self.function_context.last_mut().unwrap().store(name);
   }
 
-  fn push_block(&mut self) {
-    self.function_context.last_mut().unwrap().push_block();
-  }
-
-  fn pop_block(&mut self, name: String) {
-    self.function_context.last_mut().unwrap().pop_block(name);
-  }
-
   fn push_function(&mut self) {
     self.function_context.push(IrFuncContext::new())
   }
 
   fn pop_function(&mut self, ex: &FunctionDeclarationEx) -> FunctionRef {
     let mut context = self.function_context.pop().unwrap();
-
-    context.pop_block(String::from("init"));
 
     let func_ref = FunctionRef {
       package: self.package.clone(),
@@ -437,7 +432,8 @@ impl IrModuleContext {
     let func = IrFunction {
       func_ref: func_ref.clone(),
       args,
-      blocks: context.blocks,
+      body: context.body,
+      shape: ex.shape().clone(),
     };
 
     self.functions.insert(ex.id.clone(), func);
@@ -446,9 +442,7 @@ impl IrModuleContext {
 }
 
 struct IrFuncContext {
-  pub blocks: HashMap<String, Vec<Ir>>,
-
-  pub block_stack: Vec<Vec<Ir>>,
+  pub body: Vec<Ir>,
 
   scope_stack: Vec<IrScope>,
 }
@@ -456,16 +450,14 @@ struct IrFuncContext {
 impl IrFuncContext {
   fn new() -> IrFuncContext {
     IrFuncContext {
-      blocks: HashMap::new(),
-
-      block_stack: vec![vec![]],
+      body: Vec::new(),
 
       scope_stack: vec![IrScope::new()],
     }
   }
 
   fn append(&mut self, ir: Ir) {
-    self.block_stack.last_mut().unwrap().push(ir)
+    self.body.push(ir)
   }
 
   fn lookup(&self, name: &str) -> Option<ScopeLookup> {
@@ -480,15 +472,6 @@ impl IrFuncContext {
 
   fn store(&mut self, name: String) {
     self.scope_stack.last_mut().unwrap().scope.insert(name, ScopeLookup::Local);
-  }
-
-  fn push_block(&mut self) {
-    self.block_stack.push(Vec::new())
-  }
-
-  fn pop_block(&mut self, name: String) {
-    let last = self.block_stack.pop().unwrap();
-    self.blocks.insert(name, last);
   }
 }
 

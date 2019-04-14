@@ -35,10 +35,10 @@ impl Machine {
 
   pub fn new(app: BitApplication) -> Machine {
     let mut core_functions: HashMap<String, Rc<RunFunction>> = HashMap::new();
-    core_functions.insert(String::from("Core.+"), Rc::new(float_op("Core.+", |l, r| l + r)));
-    core_functions.insert(String::from("Core.-"), Rc::new(float_op("Core.-", |l, r| l - r)));
-    core_functions.insert(String::from("Core.*"), Rc::new(float_op("Core.*", |l, r| l * r)));
-    core_functions.insert(String::from("Core./"), Rc::new(float_op("Core./", |l, r| l / r)));
+    core_functions.insert(String::from("+"), Rc::new(float_op("+", |l, r| l + r)));
+    core_functions.insert(String::from("-"), Rc::new(float_op("-", |l, r| l - r)));
+    core_functions.insert(String::from("*"), Rc::new(float_op("*", |l, r| l * r)));
+    core_functions.insert(String::from("/"), Rc::new(float_op("/", |l, r| l / r)));
     Machine{app, core_functions}
   }
 

@@ -3,6 +3,7 @@ extern crate core;
 extern crate simple_error;
 
 use std::collections::HashMap;
+use std::path::Path;
 
 use simple_error::SimpleError;
 
@@ -14,13 +15,12 @@ use bytecode::Instruction;
 use compiler::compile_package;
 use interpreter::Machine;
 use interpreter::RunFunction;
+use ir::compile_ir_module;
+use parser::parse;
 use runtime::Value;
 use shapes::BaseShapeKind;
 use shapes::Shape;
-use parser::parse;
-use std::path::Path;
 use typechecker::check_module;
-use ir::compile_ir_module;
 
 mod shapes;
 mod ast;
@@ -34,7 +34,7 @@ mod optimize;
 mod ir;
 
 fn main() {
-  match ir_compile_test() {
+  match compile_test() {
     Ok(Value::Float(result)) => println!("Success: \n{:#?}", result),
     Ok(_) => println!("Failure: "),
     Err(simple_error) => println!("Error: {}", simple_error.as_str())
