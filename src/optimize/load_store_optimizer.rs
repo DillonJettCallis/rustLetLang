@@ -1,38 +1,29 @@
 use ir::{IrFunction, Ir};
 
 pub fn load_store_opt(func: &mut IrFunction) {
+  load_store(&mut func.body);
+}
+
+fn load_store(body: &mut Vec<Ir>) {
   let mut index = 0usize;
-  let body = &mut func.body;
   let mut do_remove = false;
 
-  while index < body.len() - 1 {
-    match body[index] {
-      Ir::StoreValue {local: ref store} => {
-        if let Ir::LoadValue{local: ref load} = body[index + 1] {
-          if store == load {
-            let mut inner = index + 2;
-            let mut found_reset = false;
-
-            while !found_reset && inner < body.len() {
-              match body[inner] {
-                Ir::StoreValue{local: ref next_store} if next_store == store => break,
-                Ir::LoadValue{local: ref next_load} if next_load == store => found_reset = true,
-                _ => {}
-              }
-
-              inner += 1;
-            }
-
-            if found_reset {
-              // Just skip the following load
-              index += 1;
-            } else {
+  while index < body.len() - 2 {
+    if let Ir::StoreValue {local: ref store} = body[index] {
+      if let Ir::LoadValue{local: ref load} = body[index + 1] {
+        if store == load {
+          if let Ir::FreeLocal {local: ref free} = body[index + 2] {
+            if load == free {
               do_remove = true
             }
           }
         }
       }
-      _ => {}
+    }
+
+    if let Ir::Branch {ref mut then_block, ref mut else_block} = body[index] {
+      load_store( then_block);
+      load_store( else_block);
     }
 
     if do_remove {
@@ -42,6 +33,5 @@ pub fn load_store_opt(func: &mut IrFunction) {
       index += 1;
     }
   }
-
 }
 

@@ -15,8 +15,8 @@ impl Optimizer {
   pub fn new() -> Optimizer {
     Optimizer {
       ops: vec![
-        Box::new(load_store_opt),
         Box::new(free_local_opt),
+        Box::new(load_store_opt),
       ]
     }
   }
