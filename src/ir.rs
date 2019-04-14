@@ -125,9 +125,11 @@ impl Ir {
         Ir::Return => writer.write_all(b"Return"),
         Ir::Branch{then_block, else_block} => {
           let inner_indent = format!("{}    ", indent);
-          writer.write_all(format!("Branch(\n{}  then_block:\n", indent).as_bytes());
+          writer.write_all(format!("Branch(\n{}  then_block:\n", indent).as_bytes())
+            .map_err(|err| SimpleError::from(err))?;
           Ir::pretty_print(then_block, &inner_indent, writer)?;
-          writer.write_all(format!("{}  else_block:\n", indent).as_bytes());
+          writer.write_all(format!("{}  else_block:\n", indent).as_bytes())
+            .map_err(|err| SimpleError::from(err))?;
           Ir::pretty_print(else_block, &inner_indent, writer)?;
           Ok(())
         },

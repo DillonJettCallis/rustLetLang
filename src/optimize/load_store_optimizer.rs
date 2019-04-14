@@ -1,23 +1,22 @@
-use optimize::Optimizer;
-use bytecode::{BitModule, BitFunction, Instruction};
+use ir::{IrFunction, Ir};
 
-// TODO: Fill in jumps
-pub fn load_store_opt(module: &mut BitModule, func: &mut BitFunction) {
+pub fn load_store_opt(func: &mut IrFunction) {
   let mut index = 0usize;
   let body = &mut func.body;
+  let mut do_remove = false;
 
   while index < body.len() - 1 {
     match body[index] {
-      Instruction::StoreValue {local: store} => {
-        if let Instruction::LoadValue{local: load} = body[index + 1] {
+      Ir::StoreValue {local: ref store} => {
+        if let Ir::LoadValue{local: ref load} = body[index + 1] {
           if store == load {
             let mut inner = index + 2;
             let mut found_reset = false;
 
             while !found_reset && inner < body.len() {
               match body[inner] {
-                Instruction::StoreValue{local: next_store} if next_store == store => break,
-                Instruction::LoadValue{local: next_load} if next_load == store => found_reset = true,
+                Ir::StoreValue{local: ref next_store} if next_store == store => break,
+                Ir::LoadValue{local: ref next_load} if next_load == store => found_reset = true,
                 _ => {}
               }
 
@@ -28,9 +27,7 @@ pub fn load_store_opt(module: &mut BitModule, func: &mut BitFunction) {
               // Just skip the following load
               index += 1;
             } else {
-              body.drain(index..index + 2);
-              // removing two elements means we want to go back one.
-              index -= 1;
+              do_remove = true
             }
           }
         }
@@ -38,7 +35,12 @@ pub fn load_store_opt(module: &mut BitModule, func: &mut BitFunction) {
       _ => {}
     }
 
-    index += 1;
+    if do_remove {
+      body.drain(index..index + 2);
+      do_remove = false;
+    } else {
+      index += 1;
+    }
   }
 
 }

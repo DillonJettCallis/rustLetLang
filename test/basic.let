@@ -6,4 +6,10 @@ public fun main(): Float = {
     x
 }
 
-fun higher(op: {Float, Float -> Float}): Float = op(2, 4)
+fun higher(op: {Float, Float -> Float}): Float = {
+  let first = op(2, 4)
+  let second = op(first, 3)
+  let third = 4 + 3 * 1 - second
+  let fourth = first + second * third
+  op(fourth, 2)
+}

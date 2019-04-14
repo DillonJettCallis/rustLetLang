@@ -80,11 +80,16 @@ fn find_modules(base: &str, package: &str) -> Result<Vec<Module>, SimpleError> {
   Ok(modules)
 }
 
-pub fn compile(module: IrModule) -> Result<BitModule, SimpleError> {
+pub fn compile(mut module: IrModule) -> Result<BitModule, SimpleError> {
   let mut context = ModuleContext::new();
+  let optimizer = Optimizer::new();
   let mut functions = HashMap::<String, Rc<RunFunction>>::new();
 
-  for (name, raw_func) in &module.functions {
+  for (name, mut raw_func) in module.functions {
+    optimizer.optimize(&mut raw_func);
+
+    raw_func.debug();
+
     let mut func_context = FuncContext::new(&raw_func.args);
 
     let body = compile_block(&mut context, &mut func_context, &raw_func.body);
