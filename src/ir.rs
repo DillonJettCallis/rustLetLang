@@ -15,7 +15,6 @@ pub struct IrModule {
 }
 
 impl IrModule {
-
   pub fn debug(&self) -> Result<(), SimpleError> {
     let mut writer = io::stderr();
 
@@ -28,7 +27,6 @@ impl IrModule {
 
     Ok(())
   }
-
 }
 
 pub struct IrFunction {
@@ -38,7 +36,6 @@ pub struct IrFunction {
 }
 
 impl IrFunction {
-
   pub fn debug(&self) {
     let mut writer = io::stderr();
 
@@ -62,12 +59,6 @@ impl IrFunction {
     writer.write_all(b"\n")
       .map_err(|err| SimpleError::from(err))
   }
-
-}
-
-pub struct IrJumpBlock {
-  then_block: String,
-  else_block: String,
 }
 
 pub enum Ir {
@@ -103,10 +94,10 @@ pub enum Ir {
     func: FunctionRef,
   },
   Return,
-  IfEqual(IrJumpBlock),
-  IfNotEqual(IrJumpBlock),
-  IfTrue(IrJumpBlock),
-  IfFalse(IrJumpBlock),
+  Branch {
+    then_block: String,
+    else_block: String,
+  },
   Jump {
     block: String
   },
@@ -115,9 +106,7 @@ pub enum Ir {
 }
 
 impl Ir {
-
   pub fn pretty_print<Writer: Write>(block: &Vec<Ir>, writer: &mut Writer) -> Result<(), SimpleError> {
-
     for (index, next) in block.iter().enumerate() {
       writer.write_all(format!("      {}: ", index).as_bytes()).map_err(|err| SimpleError::from(err))?;
 
@@ -127,20 +116,20 @@ impl Ir {
         Ir::Pop => writer.write_all(b"Pop"),
         Ir::Swap => writer.write_all(b"Swap"),
         Ir::LoadConstNull => writer.write_all(b"LoadConstNull"),
-        Ir::LoadConstString {value} => writer.write_all(format!("LoadConstString('{}')", value).as_bytes()),
-        Ir::LoadConstFunction {value} => writer.write_all(format!("LoadConstFunction({})", value.pretty()).as_bytes()),
-        Ir::LoadConstFloat {value} => writer.write_all(format!("LoadConstFloat({})", value).as_bytes()),
-        Ir::LoadValue {local} => writer.write_all(format!("LoadValue({})", local).as_bytes()),
-        Ir::StoreValue {local} => writer.write_all(format!("StoreValue({})", local).as_bytes()),
-        Ir::CallStatic {func} => writer.write_all(format!("CallStatic({})", func.pretty()).as_bytes()),
-        Ir::CallDynamic {shape} => writer.write_all(format!("CallDynamic({})", shape.pretty()).as_bytes()),
-        Ir::BuildClosure {param_count, func} => writer.write_all(format!("BuildClosure({}, '{}')", *param_count, func.pretty()).as_bytes()),
+        Ir::LoadConstString { value } => writer.write_all(format!("LoadConstString('{}')", value).as_bytes()),
+        Ir::LoadConstFunction { value } => writer.write_all(format!("LoadConstFunction({})", value.pretty()).as_bytes()),
+        Ir::LoadConstFloat { value } => writer.write_all(format!("LoadConstFloat({})", value).as_bytes()),
+        Ir::LoadValue { local } => writer.write_all(format!("LoadValue({})", local).as_bytes()),
+        Ir::StoreValue { local } => writer.write_all(format!("StoreValue({})", local).as_bytes()),
+        Ir::CallStatic { func } => writer.write_all(format!("CallStatic({})", func.pretty()).as_bytes()),
+        Ir::CallDynamic { shape } => writer.write_all(format!("CallDynamic({})", shape.pretty()).as_bytes()),
+        Ir::BuildClosure { param_count, func } => writer.write_all(format!("BuildClosure({}, '{}')", *param_count, func.pretty()).as_bytes()),
         Ir::Return => writer.write_all(b"Return"),
         Ir::IfEqual(jump) => writer.write_all(format!("IfEqual({}, {})", jump.then_block, jump.else_block).as_bytes()),
         Ir::IfNotEqual(jump) => writer.write_all(format!("IfNotEqual({}, {})", jump.then_block, jump.else_block).as_bytes()),
         Ir::IfTrue(jump) => writer.write_all(format!("IfTrue({}, {})", jump.then_block, jump.else_block).as_bytes()),
         Ir::IfFalse(jump) => writer.write_all(format!("IfFalse({}, {})", jump.then_block, jump.else_block).as_bytes()),
-        Ir::Jump{block} => writer.write_all(format!("Jump({})", block).as_bytes()),
+        Ir::Jump { block } => writer.write_all(format!("Jump({})", block).as_bytes()),
         Ir::Debug => writer.write_all(b"Debug"),
         Ir::Error => writer.write_all(b"Error"),
       }.map_err(|err| SimpleError::from(err))?;
@@ -150,7 +139,6 @@ impl Ir {
 
     Ok(())
   }
-  
 }
 
 pub fn compile_ir_module(module: &Module) -> Result<IrModule, SimpleError> {
@@ -175,7 +163,7 @@ pub fn compile_ir_module(module: &Module) -> Result<IrModule, SimpleError> {
     package: module.package.clone(),
     name: module.name.clone(),
 
-    functions: context.functions
+    functions: context.functions,
   })
 }
 
