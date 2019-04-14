@@ -87,7 +87,7 @@ pub enum Ir {
     func: FunctionRef,
   },
   CallDynamic {
-    shape: Shape
+    param_count: LocalId,
   },
   BuildClosure {
     param_count: LocalId,
@@ -122,13 +122,10 @@ impl Ir {
         Ir::LoadValue { local } => writer.write_all(format!("LoadValue({})", local).as_bytes()),
         Ir::StoreValue { local } => writer.write_all(format!("StoreValue({})", local).as_bytes()),
         Ir::CallStatic { func } => writer.write_all(format!("CallStatic({})", func.pretty()).as_bytes()),
-        Ir::CallDynamic { shape } => writer.write_all(format!("CallDynamic({})", shape.pretty()).as_bytes()),
+        Ir::CallDynamic { param_count } => writer.write_all(format!("CallDynamic({})", param_count).as_bytes()),
         Ir::BuildClosure { param_count, func } => writer.write_all(format!("BuildClosure({}, '{}')", *param_count, func.pretty()).as_bytes()),
         Ir::Return => writer.write_all(b"Return"),
-        Ir::IfEqual(jump) => writer.write_all(format!("IfEqual({}, {})", jump.then_block, jump.else_block).as_bytes()),
-        Ir::IfNotEqual(jump) => writer.write_all(format!("IfNotEqual({}, {})", jump.then_block, jump.else_block).as_bytes()),
-        Ir::IfTrue(jump) => writer.write_all(format!("IfTrue({}, {})", jump.then_block, jump.else_block).as_bytes()),
-        Ir::IfFalse(jump) => writer.write_all(format!("IfFalse({}, {})", jump.then_block, jump.else_block).as_bytes()),
+        Ir::Branch{then_block, else_block} => writer.write_all(format!("IfEqual({}, {})", then_block, else_block).as_bytes()),
         Ir::Jump { block } => writer.write_all(format!("Jump({})", block).as_bytes()),
         Ir::Debug => writer.write_all(b"Debug"),
         Ir::Error => writer.write_all(b"Error"),
@@ -246,7 +243,12 @@ impl IrCompilable for CallEx {
       compile_ir_expression(arg, context)?;
     }
 
-    context.append(Ir::CallDynamic { shape: func.shape() });
+    if let Shape::SimpleFunctionShape {args, ..} = func.shape() {
+      context.append(Ir::CallDynamic { param_count: args.len() as LocalId });
+    } else {
+      return self.loc.fail("Function does not have function shape");
+    }
+
     Ok(())
   }
 }
@@ -462,8 +464,8 @@ impl IrFuncContext {
     }
   }
 
-  fn append(&mut self, Ir: Ir) {
-    self.block_stack.last_mut().unwrap().push(Ir)
+  fn append(&mut self, ir: Ir) {
+    self.block_stack.last_mut().unwrap().push(ir)
   }
 
   fn lookup(&self, name: &str) -> Option<ScopeLookup> {

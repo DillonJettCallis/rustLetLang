@@ -151,7 +151,7 @@ pub enum Instruction {
     func_id: ConstantId,
   },
   CallDynamic {
-    shape_id: ConstantId
+    param_count: LocalId,
   },
   BuildClosure {
     param_count: LocalId,
@@ -185,7 +185,7 @@ impl Instruction {
         Instruction::LoadValue {local} => writer.write_all(format!("LoadValue({})", local).as_bytes()),
         Instruction::StoreValue {local} => writer.write_all(format!("StoreValue({})", local).as_bytes()),
         Instruction::CallStatic {func_id} => writer.write_all(format!("CallStatic('{}')", module.pretty_constant(&LoadType::Function, *func_id)).as_bytes()),
-        Instruction::CallDynamic {shape_id} => writer.write_all(format!("CallDynamic({})", module.lookup_shape(*shape_id).pretty()).as_bytes()),
+        Instruction::CallDynamic {param_count} => writer.write_all(format!("CallDynamic({})", param_count).as_bytes()),
         Instruction::BuildClosure {param_count, func_id} => writer.write_all(format!("BuildClosure({}, '{}')", param_count, module.pretty_constant(&LoadType::Function, *func_id)).as_bytes()),
         Instruction::Return => writer.write_all(b"Return"),
         Instruction::IfEqual{jump} => writer.write_all(format!("IfEqual({})", jump).as_bytes()),

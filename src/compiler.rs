@@ -306,9 +306,7 @@ impl Compilable for CallEx {
       body.append(&mut more);
     }
 
-    let shape_id = context.lookup_shape(func.shape());
-
-    body.push(Instruction::CallDynamic { shape_id });
+    body.push(Instruction::CallDynamic { param_count: args.len() as LocalId });
     Ok(body)
   }
 }

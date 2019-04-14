@@ -159,36 +159,24 @@ impl Machine {
             return Err(SimpleError::new("Invalid bytecode. CallStatic is not function"))
           }
         },
-        Instruction::CallDynamic{shape_id} => {
-          let shape: &Shape = module.shape_refs.get(shape_id as usize)
-            .ok_or_else(|| SimpleError::new("Invalid bytecode. Invalid Shape constant"))?;
+        Instruction::CallDynamic{param_count} => {
+          let mut params: Vec<Value> = Vec::with_capacity(param_count as usize);
 
-          if let Shape::SimpleFunctionShape { args, result: _ } = shape {
-            let size = args.len();
-            let mut params: Vec<Value> = Vec::with_capacity(size);
+          for i in 0..param_count {
+            let param = stack.pop()
+              .ok_or_else(|| SimpleError::new("Invalid bytecode. Not enough args for function"))?;
 
-            for i in 0..size {
-              let param = stack.pop()
-                .ok_or_else(|| SimpleError::new("Invalid bytecode. Not enough args for function"))?;
+            params.push(param);
+          }
 
-              params.push(param);
-            }
+          params.reverse();
 
-            params.reverse();
+          let maybe_func: Value = stack.pop()
+            .ok_or_else(|| SimpleError::new("Invalid bytecode. Invalid built in function id"))?;
 
-            let maybe_func: Value = stack.pop()
-              .ok_or_else(|| SimpleError::new("Invalid bytecode. Invalid built in function id"))?;
-
-            if let Value::Function(func) = maybe_func {
-              if func.get_shape() == shape {
-                let result = func.execute(&self, params)?;
-                stack.push(result);
-              } else {
-                return Err(SimpleError::new("Invalid bytecode. CallDynamic function shape different than provided shape"))
-              }
-            } else {
-              return Err(SimpleError::new("Invalid bytecode. CallDynamic is not function"))
-            }
+          if let Value::Function(func) = maybe_func {
+            let result = func.execute(&self, params)?;
+            stack.push(result);
           } else {
             return Err(SimpleError::new("Invalid bytecode. CallDynamic is not function"))
           }
