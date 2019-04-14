@@ -140,15 +140,17 @@ fn compile_block(context: &mut ModuleContext, func: &mut FuncContext, block: &Ve
         let mut then_body = compile_block(context, func, then_block);
         let mut else_body = compile_block(context, func, else_block);
 
-        then_body.push(Instruction::Jump {jump: else_body.len() as i32});
+        if !else_body.is_empty() {
+          then_body.push(Instruction::Jump { jump: else_body.len() as i32 });
+        }
 
-        body.push(Instruction::IfTrue {jump: then_body.len() as i32});
+        body.push(Instruction::Branch {jump: then_body.len() as i32});
         body.append(&mut then_body);
         body.append(&mut else_body);
       },
       Ir::Debug => body.push(Instruction::Debug),
       Ir::Error => body.push(Instruction::Error),
-      Ir::FreeLocal {local} =>func.free(local),
+      Ir::FreeLocal {local} => func.free(local),
     }
   }
 

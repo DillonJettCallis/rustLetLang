@@ -58,8 +58,6 @@ impl Machine {
       .and_then(|package| package.modules.get(&func.module))
       .ok_or_else(|| SimpleError::new("BitFunction lookup failed"))?;
 
-    func.debug(module)?;
-
     let mut index = 0usize;
     let mut stack: Vec<Value> = Vec::new();
     locals.resize(func.max_locals as usize, Value::Null);
@@ -211,29 +209,22 @@ impl Machine {
           return stack.pop()
             .ok_or_else(|| SimpleError::new("Invalid bytecode. Attempt to return empty stack"));
         },
-        Instruction::IfEqual{jump} => {
+        Instruction::Branch{jump} => {
           let first = stack.pop()
-            .ok_or_else(|| SimpleError::new("Invalid bytecode. Attempt to IfEqual empty stack"))?;
+            .ok_or_else(|| SimpleError::new("Invalid bytecode. Attempt to Branch empty stack"))?;
 
-          let second = stack.pop()
-            .ok_or_else(|| SimpleError::new("Invalid bytecode. Attempt to IfEqual stack of 1 item"))?;
-
-          match (first, second) {
-            (Value::Float(first_value), Value::Float(second_value)) => {
-              if first_value == second_value {
-                index = Machine::calculate_jump(index, jump);
-              }
-            }
-            _ => {
-              // Do nothing
-            }
+          match first {
+            Value::True => {},
+            Value::False => index = Machine::calculate_jump(index, jump),
+            _ => return Err(SimpleError::new("Invalid bytecode. Attempt to Branch on non boolean"))
           }
         },
         Instruction::Jump{jump} => {
           index = Machine::calculate_jump(index, jump);
         }
         Instruction::Debug => {
-          println!("Debug: \n  Stack: {:#?}\n  Locals: {:#?}", &stack, &locals)
+          println!("Debug: \n  Stack: {:#?}\n  Locals: {:#?}\n  Function: ", &stack, &locals);
+          func.debug(module)?;
         }
 
         _ => unimplemented!()
@@ -247,10 +238,10 @@ impl Machine {
 
   fn calculate_jump(index: usize, jump: i32) -> usize {
     if jump >= 0 {
-      return index + (jump as usize) - 1;
+      return index + (jump as usize);
     } else {
       let rel = (0 - jump) as usize;
-      return index - rel - 1;
+      return index - rel;
     }
   }
 }
