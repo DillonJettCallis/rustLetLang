@@ -88,28 +88,23 @@ impl Machine {
         Instruction::LoadConstNull => {
           stack.push(Value::Null);
         },
-        Instruction::LoadConst{ref kind, const_id} => {
-          match kind {
-            LoadType::String => {
-              let index = const_id as usize;
+        Instruction::LoadConstTrue => {
+          stack.push(Value::True);
+        },
+        Instruction::LoadConstFalse => {
+          stack.push(Value::False);
+        },
+        Instruction::LoadConstString{const_id} => {
+          stack.push(Value::String(Rc::new(module.lookup_string(const_id)?)));
+        },
+        Instruction::LoadConstFunction{const_id} => {
+          let func_ref = module.lookup_function(const_id)?;
 
-              let value: &String = module.string_constants.get(index)
-                .ok_or_else(|| SimpleError::new("Invalid bytecode. Invalid String constant id"))?;
+          let boxed = module.functions.get(&func_ref.name)
+            .ok_or_else(|| SimpleError::new("Invalid bytecode. Invalid Function constant id"))?
+            .clone();
 
-              stack.push(Value::String(Rc::new(value.clone())));
-            },
-            LoadType::Function => {
-              let index = const_id as usize;
-
-              let func_ref = &module.function_refs[index];
-              let boxed = module.functions.get(&func_ref.name)
-                .ok_or_else(|| SimpleError::new("Invalid bytecode. Invalid Function constant id"))?
-                .clone();
-
-              stack.push(Value::Function(boxed));
-            }
-            _ => return Err(SimpleError::new("Invalid bytecode. LoadConst of invalid kind"))
-          }
+          stack.push(Value::Function(boxed));
         },
         Instruction::LoadConstFloat{value} => stack.push(Value::Float(value)),
         Instruction::LoadValue{local} => {

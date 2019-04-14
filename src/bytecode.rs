@@ -49,15 +49,22 @@ pub struct BitModule {
 
 impl BitModule {
 
-  fn pretty_constant(&self, kind: &LoadType, id: ConstantId) -> String {
-    match kind {
-      LoadType::String => self.string_constants[id as usize].clone(),
-      LoadType::Function => self.function_refs[id as usize].pretty()
-    }
+  pub fn lookup_string(&self, id: ConstantId) -> Result<String, SimpleError> {
+    Ok(self.string_constants.get(id as usize)
+      .ok_or_else(|| SimpleError::new("Invalid bytecode. Invalid String constant id"))?
+      .clone())
   }
 
-  fn lookup_shape(&self, shape_id: ConstantId) -> Shape {
-    self.shape_refs[shape_id as usize].clone()
+  pub fn lookup_function(&self, id: ConstantId) -> Result<FunctionRef, SimpleError> {
+    Ok(self.function_refs.get(id as usize)
+      .ok_or_else(|| SimpleError::new("Invalid bytecode. Invalid Function constant id"))?
+      .clone())
+  }
+
+  pub fn lookup_shape(&self, id: ConstantId) -> Result<Shape, SimpleError> {
+    Ok(self.shape_refs.get(id as usize)
+      .ok_or_else(|| SimpleError::new("Invalid bytecode. Invalid Shape constant id"))?
+      .clone())
   }
 
 }
@@ -112,32 +119,16 @@ impl BitFunction {
 
 }
 
-pub enum LoadType {
-  String,
-  Function
-}
-
-impl LoadType {
-
-  fn pretty(&self) -> &'static str {
-    match self {
-      LoadType::String => "String",
-      LoadType::Function => "Function"
-    }
-  }
-
-}
-
 pub enum Instruction {
   NoOp, // 0 is an error to hopefully crash early on invalid bytecode.
   Duplicate,
   Pop,
   Swap,
   LoadConstNull,
-  LoadConst {
-    kind: LoadType,
-    const_id: ConstantId
-  },
+  LoadConstTrue,
+  LoadConstFalse,
+  LoadConstString {const_id: ConstantId},
+  LoadConstFunction {const_id: ConstantId},
   LoadConstFloat {
     value: f64
   },
@@ -177,13 +168,16 @@ impl Instruction {
         Instruction::Pop => writer.write_all(b"Pop"),
         Instruction::Swap => writer.write_all(b"Swap"),
         Instruction::LoadConstNull => writer.write_all(b"LoadConstNull"),
-        Instruction::LoadConst {kind, const_id} => writer.write_all(format!("LoadConst({}, '{}')", kind.pretty(), module.pretty_constant(kind, *const_id)).as_bytes()),
+        Instruction::LoadConstTrue => writer.write_all(b"LoadConstTrue"),
+        Instruction::LoadConstFalse => writer.write_all(b"LoadConstFalse"),
+        Instruction::LoadConstString {const_id} => writer.write_all(format!("LoadConstString('{}')", module.lookup_string(*const_id)?).as_bytes()),
+        Instruction::LoadConstFunction {const_id} => writer.write_all(format!("LoadConstFunction('{}')", module.lookup_function(*const_id)?.pretty()).as_bytes()),
         Instruction::LoadConstFloat {value} => writer.write_all(format!("LoadConstFloat({})", value).as_bytes()),
         Instruction::LoadValue {local} => writer.write_all(format!("LoadValue({})", local).as_bytes()),
         Instruction::StoreValue {local} => writer.write_all(format!("StoreValue({})", local).as_bytes()),
-        Instruction::CallStatic {func_id} => writer.write_all(format!("CallStatic('{}')", module.pretty_constant(&LoadType::Function, *func_id)).as_bytes()),
+        Instruction::CallStatic {func_id} => writer.write_all(format!("CallStatic('{}')", module.lookup_function(*func_id)?.pretty()).as_bytes()),
         Instruction::CallDynamic {param_count} => writer.write_all(format!("CallDynamic({})", param_count).as_bytes()),
-        Instruction::BuildClosure {param_count, func_id} => writer.write_all(format!("BuildClosure({}, '{}')", param_count, module.pretty_constant(&LoadType::Function, *func_id)).as_bytes()),
+        Instruction::BuildClosure {param_count, func_id} => writer.write_all(format!("BuildClosure({}, '{}')", param_count, module.lookup_function(*func_id)?.pretty()).as_bytes()),
         Instruction::Return => writer.write_all(b"Return"),
         Instruction::Branch{jump} => writer.write_all(format!("Branch({})", jump).as_bytes()),
         Instruction::Jump{jump} => writer.write_all(format!("Jump({})", jump).as_bytes()),

@@ -23,10 +23,9 @@ use bytecode::BitFunction;
 use bytecode::ConstantId;
 use bytecode::FunctionRef;
 use bytecode::Instruction;
-use bytecode::LoadType;
 use bytecode::LocalId;
 use interpreter::RunFunction;
-use ir::{compile_ir_module, IrModule, IrFunction, Ir};
+use ir::{compile_ir_module, Ir, IrFunction, IrModule};
 use optimize::Optimizer;
 use parser::parse;
 use shapes::Shape;
@@ -41,7 +40,9 @@ pub fn compile_package(name: &str, base_dir: &str) -> Result<BitPackage, SimpleE
   for parsed in raw_modules {
     let checked = typechecker::check_module(parsed)?;
     let compiled = compile_ir_module(&checked)?;
-    modules.insert(checked.name.clone(), compile(compiled)?);
+    compiled.debug();
+    let bytecode = compile(compiled)?;
+    modules.insert(checked.name.clone(), bytecode);
   }
 
   Ok(BitPackage {
@@ -88,8 +89,6 @@ pub fn compile(mut module: IrModule) -> Result<BitModule, SimpleError> {
   for (name, mut raw_func) in module.functions {
     optimizer.optimize(&mut raw_func);
 
-    raw_func.debug();
-
     let mut func_context = FuncContext::new(&raw_func.args);
 
     let body = compile_block(&mut context, &mut func_context, &raw_func.body);
@@ -126,8 +125,8 @@ fn compile_block(context: &mut ModuleContext, func: &mut FuncContext, block: &Ve
       Ir::Pop => body.push(Instruction::Pop),
       Ir::Swap => body.push(Instruction::Swap),
       Ir::LoadConstNull => body.push(Instruction::LoadConstNull),
-      Ir::LoadConstString { value } => body.push(Instruction::LoadConst{kind: LoadType::String, const_id: context.lookup_string_constant(value)}),
-      Ir::LoadConstFunction { value } => body.push(Instruction::LoadConst{kind: LoadType::Function, const_id: context.lookup_function_ref(value)}),
+      Ir::LoadConstString { value } => body.push(Instruction::LoadConstString{const_id: context.lookup_string_constant(value)}),
+      Ir::LoadConstFunction { value } => body.push(Instruction::LoadConstFunction{const_id: context.lookup_function_ref(value)}),
       Ir::LoadConstFloat { value } => body.push(Instruction::LoadConstFloat {value: *value}),
       Ir::LoadValue { local } => body.push(Instruction::LoadValue {local: func.lookup_local(local)}),
       Ir::StoreValue { local } => body.push(Instruction::StoreValue {local: func.lookup_local(local)}),
