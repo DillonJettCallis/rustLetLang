@@ -5,10 +5,10 @@ use std::io::Write;
 
 use simple_error::SimpleError;
 
-use ast::{AssignmentEx, BinaryOpEx, BlockEx, CallEx, Expression, FunctionDeclarationEx, Location, Module, NumberLiteralEx, Parameter, StringLiteralEx, VariableEx};
+use ast::{AssignmentEx, BinaryOpEx, BlockEx, CallEx, Expression, FunctionDeclarationEx, Location, Module, NumberLiteralEx, Parameter, StringLiteralEx, VariableEx, IfEx};
 use bytecode::{FunctionRef, LocalId};
 use ir::ScopeLookup::Local;
-use shapes::{Shape, shape_float};
+use shapes::{Shape, shape_float, shape_boolean};
 
 pub struct IrModule {
   pub package: String,
@@ -66,6 +66,8 @@ pub enum Ir {
   Pop,
   Swap,
   LoadConstNull,
+  LoadConstTrue,
+  LoadConstFalse,
   LoadConstString {
     value: String,
   },
@@ -91,6 +93,7 @@ pub enum Ir {
     param_count: LocalId,
     func: FunctionRef,
   },
+  BuildRecursiveFunction,
   Return,
   Branch {
     then_block: Vec<Ir>,
@@ -114,6 +117,8 @@ impl Ir {
         Ir::Pop => writer.write_all(b"Pop"),
         Ir::Swap => writer.write_all(b"Swap"),
         Ir::LoadConstNull => writer.write_all(b"LoadConstNull"),
+        Ir::LoadConstTrue => writer.write_all(b"LoadConstTrue"),
+        Ir::LoadConstFalse => writer.write_all(b"LoadConstFalse"),
         Ir::LoadConstString { value } => writer.write_all(format!("LoadConstString('{}')", value).as_bytes()),
         Ir::LoadConstFunction { value } => writer.write_all(format!("LoadConstFunction({})", value.pretty()).as_bytes()),
         Ir::LoadConstFloat { value } => writer.write_all(format!("LoadConstFloat({})", value).as_bytes()),
@@ -122,10 +127,11 @@ impl Ir {
         Ir::CallStatic { func } => writer.write_all(format!("CallStatic({})", func.pretty()).as_bytes()),
         Ir::CallDynamic { param_count } => writer.write_all(format!("CallDynamic({})", param_count).as_bytes()),
         Ir::BuildClosure { param_count, func } => writer.write_all(format!("BuildClosure({}, '{}')", *param_count, func.pretty()).as_bytes()),
+        Ir::BuildRecursiveFunction => writer.write_all(b"BuildRecursiveFunction"),
         Ir::Return => writer.write_all(b"Return"),
         Ir::Branch{then_block, else_block} => {
           let inner_indent = format!("{}    ", indent);
-          writer.write_all(format!("Branch(\n{}  then_block:\n", indent).as_bytes())
+          writer.write_all(format!("Branch\n{}  then_block:\n", indent).as_bytes())
             .map_err(|err| SimpleError::from(err))?;
           Ir::pretty_print(then_block, &inner_indent, writer)?;
           writer.write_all(format!("{}  else_block:\n", indent).as_bytes())
@@ -178,6 +184,10 @@ fn compile_ir_function(ex: &FunctionDeclarationEx, context: &mut IrModuleContext
     context.store(closure.id.clone());
   }
 
+  if ex.context.is_recursive {
+    context.store(ex.id.clone());
+  }
+
   for arg in &ex.args {
     context.store(arg.id.clone());
   }
@@ -191,14 +201,24 @@ fn compile_ir_function(ex: &FunctionDeclarationEx, context: &mut IrModuleContext
 
 fn compile_ir_expression(ex: &Expression, context: &mut IrModuleContext) -> Result<(), SimpleError> {
   match ex {
+    Expression::NoOp(_) => Ok(()),
     Expression::FunctionDeclaration(ex) => ex.compile_ir(context),
     Expression::Assignment(ex) => ex.compile_ir(context),
     Expression::Variable(ex) => ex.compile_ir(context),
     Expression::BinaryOp(ex) => ex.compile_ir(context),
     Expression::Call(ex) => ex.compile_ir(context),
+    Expression::If(ex) => ex.compile_ir(context),
     Expression::Block(ex) => ex.compile_ir(context),
     Expression::StringLiteral(ex) => ex.compile_ir(context),
     Expression::NumberLiteral(ex) => ex.compile_ir(context),
+    Expression::BooleanLiteral(_, value) => {
+      if *value {
+        context.append(Ir::LoadConstTrue)
+      } else {
+        context.append(Ir::LoadConstFalse)
+      }
+      Ok(())
+    }
 
     _ => unimplemented!()
   }
@@ -260,6 +280,25 @@ impl IrCompilable for CallEx {
   }
 }
 
+impl IrCompilable for IfEx {
+  fn compile_ir(&self, context: &mut IrModuleContext) -> Result<(), SimpleError> {
+    let IfEx{shape: raw_shape, loc, condition, then_block: raw_then_block, else_block: raw_else_block} = self;
+
+    compile_ir_expression(condition, context)?;
+
+    context.push_block();
+    compile_ir_expression(raw_then_block, context)?;
+    let then_block = context.pop_block();
+
+    context.push_block();
+    compile_ir_expression(raw_else_block, context)?;
+    let else_block = context.pop_block();
+
+    context.append(Ir::Branch {then_block, else_block});
+    Ok(())
+  }
+}
+
 impl IrCompilable for BinaryOpEx {
   fn compile_ir(&self, context: &mut IrModuleContext) -> Result<(), SimpleError> {
     let BinaryOpEx { shape, loc, op, left, right } = self;
@@ -296,6 +335,10 @@ impl IrCompilable for FunctionDeclarationEx {
 
       context.append(Ir::LoadConstFunction { value: func_ref });
 
+      if self.context.is_recursive {
+        context.append(Ir::BuildRecursiveFunction);
+      }
+
       if !self.context.is_lambda {
         context.store(self.id.clone());
         context.append((Ir::StoreValue { local: self.id.clone() }));
@@ -320,6 +363,10 @@ impl IrCompilable for FunctionDeclarationEx {
 
       context.append(Ir::BuildClosure { param_count: self.context.closures.len() as LocalId, func });
 
+      if self.context.is_recursive {
+        context.append(Ir::BuildRecursiveFunction);
+      }
+
       if !self.context.is_lambda {
         context.store(self.id.clone());
         context.append(Ir::StoreValue { local: self.id.clone() });
@@ -343,6 +390,11 @@ impl IrCoreContext {
       result: Box::new(shape_float()),
     };
 
+    let float_compare_op = Shape::SimpleFunctionShape {
+      args: vec![shape_float(), shape_float()],
+      result: Box::new(shape_boolean()),
+    };
+
     fn insert(scope: &mut HashMap<String, ScopeLookup>, name: &'static str, shape: Shape) {
       scope.insert(String::from(name), ScopeLookup::Static(FunctionRef {
         package: String::from("Core"),
@@ -356,6 +408,13 @@ impl IrCoreContext {
     insert(&mut scope, "-", float_op.clone());
     insert(&mut scope, "*", float_op.clone());
     insert(&mut scope, "/", float_op.clone());
+
+    insert(&mut scope, "==", float_compare_op.clone());
+    insert(&mut scope, "!=", float_compare_op.clone());
+    insert(&mut scope, ">", float_compare_op.clone());
+    insert(&mut scope, "<", float_compare_op.clone());
+    insert(&mut scope, ">=", float_compare_op.clone());
+    insert(&mut scope, "<=", float_compare_op.clone());
 
     IrCoreContext {
       scope
@@ -406,7 +465,7 @@ impl IrModuleContext {
       return Ok(core.clone());
     }
 
-    loc.fail("Variable not found in IrCompiler scope")
+    loc.fail(&format!("Variable '{}' not found in IrCompiler scope", name))
   }
 
   fn store(&mut self, name: String) {
@@ -429,22 +488,35 @@ impl IrModuleContext {
     };
 
     let mut args = ex.context.closures.clone();
+
+    if ex.context.is_recursive {
+      args.push(Parameter{id: ex.id.clone(), shape: ex.shape().clone() });
+    }
+
     args.append(&mut ex.args.clone());
 
     let func = IrFunction {
       func_ref: func_ref.clone(),
       args,
-      body: context.body,
+      body: context.pop_block(),
       shape: ex.shape().clone(),
     };
 
     self.functions.insert(ex.id.clone(), func);
     func_ref
   }
+
+  fn push_block(&mut self) {
+    self.function_context.last_mut().unwrap().push_block()
+  }
+
+  fn pop_block(&mut self) -> Vec<Ir> {
+    self.function_context.last_mut().unwrap().pop_block()
+  }
 }
 
 struct IrFuncContext {
-  pub body: Vec<Ir>,
+  pub body: Vec<Vec<Ir>>,
 
   scope_stack: Vec<IrScope>,
 }
@@ -452,14 +524,14 @@ struct IrFuncContext {
 impl IrFuncContext {
   fn new() -> IrFuncContext {
     IrFuncContext {
-      body: Vec::new(),
+      body: vec![Vec::new()],
 
       scope_stack: vec![IrScope::new()],
     }
   }
 
   fn append(&mut self, ir: Ir) {
-    self.body.push(ir)
+    self.body.last_mut().unwrap().push(ir)
   }
 
   fn lookup(&self, name: &str) -> Option<ScopeLookup> {
@@ -474,6 +546,14 @@ impl IrFuncContext {
 
   fn store(&mut self, name: String) {
     self.scope_stack.last_mut().unwrap().scope.insert(name, ScopeLookup::Local);
+  }
+
+  fn push_block(&mut self) {
+    self.body.push(Vec::new())
+  }
+
+  fn pop_block(&mut self) -> Vec<Ir> {
+    self.body.pop().unwrap()
   }
 }
 

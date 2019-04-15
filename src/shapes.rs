@@ -44,6 +44,7 @@ impl Shape {
 
         format!("{{ {} -> {} }}", arg_names, result_name)
       }
+      Shape::BaseShape{kind: BaseShapeKind::Boolean} => String::from("Boolean"),
       Shape::BaseShape{kind: BaseShapeKind::Float} => String::from("Float"),
       Shape::BaseShape{kind: BaseShapeKind::String} => String::from("String"),
       Shape::BaseShape{kind: BaseShapeKind::Unit} => String::from("Unit"),
@@ -56,6 +57,7 @@ impl Shape {
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum BaseShapeKind {
+  Boolean,
   Float,
   String,
   Unit,
@@ -72,6 +74,10 @@ pub fn shape_float() -> Shape {
 
 pub fn shape_string() -> Shape {
   Shape::BaseShape { kind: BaseShapeKind::String }
+}
+
+pub fn shape_boolean() -> Shape {
+  Shape::BaseShape { kind: BaseShapeKind::Boolean }
 }
 
 pub fn shape_unit() -> Shape {

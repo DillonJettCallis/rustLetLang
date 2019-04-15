@@ -3,7 +3,7 @@ public fun main(): Float = {
     let outside = 2;
 
     let x = higher({a, b -> Float => a + b * outside});
-    x + outside
+    pow(2, 8)
 }
 
 fun higher(op: {Float, Float -> Float}): Float = {
@@ -12,4 +12,12 @@ fun higher(op: {Float, Float -> Float}): Float = {
   let third = 4 + 3 * 1 - second
   let fourth = second * third
   op(fourth, 2)
+}
+
+fun pow(base: Float, power: Float): Float = {
+  fun recurse(prev: Float, steps: Float): Float = {
+    if (steps <= 0) prev else recurse(prev + base, steps - 1)
+  }
+
+  recurse(base, power)
 }

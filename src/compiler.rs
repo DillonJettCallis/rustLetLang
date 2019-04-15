@@ -40,7 +40,6 @@ pub fn compile_package(name: &str, base_dir: &str) -> Result<BitPackage, SimpleE
   for parsed in raw_modules {
     let checked = typechecker::check_module(parsed)?;
     let compiled = compile_ir_module(&checked)?;
-    compiled.debug();
     let bytecode = compile(compiled)?;
     modules.insert(checked.name.clone(), bytecode);
   }
@@ -88,6 +87,7 @@ pub fn compile(mut module: IrModule) -> Result<BitModule, SimpleError> {
 
   for (name, mut raw_func) in module.functions {
     optimizer.optimize(&mut raw_func);
+    raw_func.debug();
 
     let mut func_context = FuncContext::new(&raw_func.args);
 
@@ -125,6 +125,8 @@ fn compile_block(context: &mut ModuleContext, func: &mut FuncContext, block: &Ve
       Ir::Pop => body.push(Instruction::Pop),
       Ir::Swap => body.push(Instruction::Swap),
       Ir::LoadConstNull => body.push(Instruction::LoadConstNull),
+      Ir::LoadConstTrue => body.push(Instruction::LoadConstTrue),
+      Ir::LoadConstFalse => body.push(Instruction::LoadConstFalse),
       Ir::LoadConstString { value } => body.push(Instruction::LoadConstString{const_id: context.lookup_string_constant(value)}),
       Ir::LoadConstFunction { value } => body.push(Instruction::LoadConstFunction{const_id: context.lookup_function_ref(value)}),
       Ir::LoadConstFloat { value } => body.push(Instruction::LoadConstFloat {value: *value}),
@@ -133,6 +135,7 @@ fn compile_block(context: &mut ModuleContext, func: &mut FuncContext, block: &Ve
       Ir::CallStatic { func } => body.push(Instruction::CallStatic {func_id: context.lookup_function_ref(func) }),
       Ir::CallDynamic { param_count } => body.push(Instruction::CallDynamic {param_count: *param_count}),
       Ir::BuildClosure { param_count, func } => body.push(Instruction::BuildClosure {param_count: *param_count, func_id: context.lookup_function_ref(func) }),
+      Ir::BuildRecursiveFunction => body.push(Instruction::BuildRecursiveFunction),
       Ir::Return => body.push(Instruction::Return),
       Ir::Branch{then_block, else_block} => {
 

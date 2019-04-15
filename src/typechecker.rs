@@ -47,6 +47,7 @@ impl Typed for FunctionDeclarationEx {
       scope.set_scope(id, shape, &self.loc)?;
     }
 
+    let id = self.id.clone();
     let body = check(scope, self.body, self.result.clone())?;
 
     let returned_shape = body.shape();
@@ -55,7 +56,17 @@ impl Typed for FunctionDeclarationEx {
 
     let closures = scope.destroy_function_scope();
 
-    Ok(FunctionDeclarationEx{result, body, id: self.id, args, loc: self.loc, context: self.context.set_closures(closures)}.wrap())
+    let before_size = closures.len();
+    let maybe_me: Vec<Parameter> = closures.into_iter().filter(|param| param.id != id).collect();
+
+    let context = if before_size != maybe_me.len() {
+      self.context.set_is_recursive(true)
+        .set_closures(maybe_me)
+    } else {
+      self.context.set_closures(maybe_me)
+    };
+
+    Ok(FunctionDeclarationEx{result, body, id, args, loc: self.loc, context}.wrap())
   }
 
 }
@@ -104,15 +115,24 @@ impl Typed for AssignmentEx {
   }
 }
 
+const FLOAT_OPS: &'static [&'static str] = &["+", "-", "*", "/"];
+const COMPARE_OPS: &'static [&'static str] = &["==", "!=", "<", ">", "<=", ">="];
+
 impl Typed for BinaryOpEx {
   fn check(self, scope: &mut Scope, expected: Shape) -> Result<Expression, SimpleError> {
     let BinaryOpEx{shape: raw_shape, left: raw_left, right: raw_right, op, loc} = self;
-    let left = check(scope, raw_left, shape_unknown())?;
-    let right = check(scope, raw_right, shape_unknown())?;
+
+    let result_shape = if FLOAT_OPS.contains(&op.as_str()) {
+      shape_float()
+    } else {
+      shape_boolean()
+    };
+
+    let left = check(scope, raw_left, shape_float())?;
+    let right = check(scope, raw_right, shape_float())?;
 
     if left.shape() == right.shape() {
-      let shape = verify(raw_shape, left.shape(), &loc)?;
-      Ok(BinaryOpEx{shape, left, right, op, loc}.wrap())
+      Ok(BinaryOpEx{shape: result_shape, left, right, op, loc}.wrap())
     } else {
       Err(SimpleError::new(format!("Incompatible types! Cannot perform operation '{}' on distinct types '{}' and '{}' {}", op, left.shape().pretty(), right.shape().pretty(), loc.pretty())))
     }
@@ -153,6 +173,30 @@ impl Typed for CallEx {
   }
 }
 
+impl Typed for IfEx {
+  fn check(self, scope: &mut Scope, expected: Shape) -> Result<Expression, SimpleError> {
+    let IfEx{shape: raw_shape, loc, condition: raw_condition, then_block: raw_then_block, else_block: raw_else_block} = self;
+
+    let condition = check(scope, raw_condition, shape_boolean())?;
+
+    verify(shape_boolean(), condition.shape(), &loc)?;
+
+    let then_block = check(scope, raw_then_block, shape_unknown())?;
+    let else_block = check(scope, raw_else_block, shape_unknown())?;
+
+    verify(then_block.shape(), else_block.shape(), &loc)?;
+
+    Ok(IfEx{
+      shape: then_block.shape(),
+      loc,
+
+      condition,
+      then_block,
+      else_block
+    }.wrap())
+  }
+}
+
 impl Typed for VariableEx {
   fn check(self, scope: &mut Scope, expected: Shape) -> Result<Expression, SimpleError> {
     let VariableEx{shape: raw_shape, loc, id} = self;
@@ -176,14 +220,17 @@ impl Typed for NumberLiteralEx {
 
 fn check(scope: &mut Scope, ex: Expression, expected: Shape) -> Result<Expression, SimpleError> {
   match ex {
+    Expression::NoOp(_) => Ok(ex),
     Expression::FunctionDeclaration(ex) => ex.check(scope, expected),
     Expression::Block(ex) => ex.check(scope, expected),
     Expression::Assignment(ex) => ex.check(scope, expected),
     Expression::BinaryOp(ex) => ex.check(scope, expected),
     Expression::Call(ex) => ex.check(scope, expected),
+    Expression::If(ex) => ex.check(scope, expected),
     Expression::Variable(ex) => ex.check(scope, expected),
     Expression::StringLiteral(ex) => ex.check(scope, expected),
     Expression::NumberLiteral(ex) => ex.check(scope, expected),
+    Expression::BooleanLiteral(..) => Ok(ex),
   }
 }
 

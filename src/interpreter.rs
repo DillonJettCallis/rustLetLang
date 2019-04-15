@@ -39,6 +39,13 @@ impl Machine {
     core_functions.insert(String::from("-"), Rc::new(float_op("-", |l, r| l - r)));
     core_functions.insert(String::from("*"), Rc::new(float_op("*", |l, r| l * r)));
     core_functions.insert(String::from("/"), Rc::new(float_op("/", |l, r| l / r)));
+
+    core_functions.insert(String::from("=="), Rc::new(float_compare_op("==", |l, r| l == r)));
+    core_functions.insert(String::from("!="), Rc::new(float_compare_op("!=", |l, r| l != r)));
+    core_functions.insert(String::from(">"), Rc::new(float_compare_op(">", |l, r| l > r)));
+    core_functions.insert(String::from(">="), Rc::new(float_compare_op(">=", |l, r| l >= r)));
+    core_functions.insert(String::from("<"), Rc::new(float_compare_op("<", |l, r| l < r)));
+    core_functions.insert(String::from("<="), Rc::new(float_compare_op("<=", |l, r| l <= r)));
     Machine{app, core_functions}
   }
 
@@ -61,6 +68,8 @@ impl Machine {
     let mut index = 0usize;
     let mut stack: Vec<Value> = Vec::new();
     locals.resize(func.max_locals as usize, Value::Null);
+
+    func.debug(module);
 
     while index < func.body.len() {
       match func.body[index] {
@@ -200,6 +209,15 @@ impl Machine {
 
           stack.push(Value::Function(Rc::new(closure)));
         },
+        Instruction::BuildRecursiveFunction => {
+          let maybe_func = stack.pop().ok_or_else(|| SimpleError::new("Invalid bytecode. Attempt to BuildRecursiveFunction of empty stack"))?;
+
+          if let Value::Function(func) = maybe_func {
+            stack.push(Value::Function(Rc::new(RecursiveFunction{func})));
+          } else {
+            return Err(SimpleError::new("Invalid bytecode. BuildRecursiveFunction is not function"))
+          }
+        },
         Instruction::Return => {
           return stack.pop()
             .ok_or_else(|| SimpleError::new("Invalid bytecode. Attempt to return empty stack"));
@@ -259,17 +277,32 @@ struct ClosureFunction {
 
 impl RunFunction for ClosureFunction {
 
-  fn execute(&self, machine: &Machine, args: Vec<Value>) -> Result<Value, SimpleError> {
+  fn execute(&self, machine: &Machine, mut args: Vec<Value>) -> Result<Value, SimpleError> {
     let mut locals = self.closures.clone();
-    let mut arg = args; // This is a weird hack I don't understand.
-    locals.append(&mut arg);
+    locals.append(&mut args);
     self.func.execute(machine, locals)
   }
 
   fn get_shape(&self) -> &Shape {
     &self.func.get_shape()
   }
+}
 
+struct RecursiveFunction {
+  func: Rc<RunFunction>,
+}
+
+impl RunFunction for RecursiveFunction {
+
+  fn execute(&self, machine: &Machine, mut args: Vec<Value>) -> Result<Value, SimpleError> {
+    let mut locals = vec![Value::Function(Rc::new(RecursiveFunction{func: self.func.clone()}))];
+    locals.append(&mut args);
+    self.func.execute(machine, locals)
+  }
+
+  fn get_shape(&self) -> &Shape {
+    &self.func.get_shape()
+  }
 }
 
 struct NativeFunction<T> {
@@ -306,6 +339,34 @@ fn float_op<Op: Fn(f64, f64) -> f64>(name: &'static str, op: Op) -> impl RunFunc
     shape: Shape::SimpleFunctionShape {
       args: vec![shape_float(), shape_float()],
       result: Box::new(shape_float()),
+    },
+  }
+}
+
+fn float_compare_op<Op: Fn(f64, f64) -> bool>(name: &'static str, op: Op) -> impl RunFunction {
+  let func = move |machine: &Machine, args: Vec<Value>| {
+    if args.len() == 2 {
+      if let Value::Float(first) = args[0] {
+        if let Value::Float(second) = args[1] {
+          let result = op(first, second);
+          let value = if result {
+            Value::True
+          } else {
+            Value::False
+          };
+          return Ok(value);
+        }
+      }
+    }
+
+    return Err(SimpleError::new(format!("{} takes exactly two float arguments", name)));
+  };
+
+  NativeFunction {
+    func,
+    shape: Shape::SimpleFunctionShape {
+      args: vec![shape_float(), shape_float()],
+      result: Box::new(shape_boolean()),
     },
   }
 }

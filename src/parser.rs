@@ -240,6 +240,12 @@ impl Parser {
     let func = self.parse_block()?;
 
     if self.check_literal("(") {
+      if let Expression::Variable(var) = &func {
+        if "if" == &var.id {
+          return self.parse_if(func.loc().clone());
+        }
+      }
+
       let mut args = Vec::new();
 
       if !self.check_literal(")") {
@@ -263,6 +269,31 @@ impl Parser {
     }
   }
 
+  fn parse_if(&mut self, loc: Location) -> Result<Expression, SimpleError> {
+    // assume 'if' and '(' are already parsed
+
+    let condition = self.parse_expression()?;
+
+    self.expect_literal(")")?;
+
+    let then_block = self.parse_expression()?;
+
+    let else_block = if self.check_literal("else") {
+      self.parse_expression()?
+    } else {
+      Expression::NoOp(self.peek().location.clone())
+    };
+
+    Ok(IfEx {
+      shape: shape_unknown(),
+      loc,
+
+      condition,
+      then_block,
+      else_block
+    }.wrap())
+  }
+
   fn parse_block(&mut self) -> Result<Expression, SimpleError> {
     if self.check_literal("{") {
       if self.check_is_lambda() {
@@ -279,6 +310,10 @@ impl Parser {
       // Skip '}'
       self.skip();
 
+      if body.is_empty() {
+        return Ok(Expression::NoOp(loc));
+      }
+
       Ok(BlockEx { loc, shape, body }.wrap())
     } else {
       self.parse_term()
@@ -292,8 +327,15 @@ impl Parser {
     let raw = match term {
       Token { kind: TokenKind::Id, .. } => {
         let id = term.value;
-        let shape = shape_unknown();
-        VariableEx { id, shape, loc }.wrap()
+
+        match id.as_str() {
+          "true" => Expression::BooleanLiteral(loc, true),
+          "false" => Expression::BooleanLiteral(loc, false),
+          _ => {
+            let shape = shape_unknown();
+            VariableEx { id, shape, loc }.wrap()
+          }
+        }
       }
       Token { kind: TokenKind::String, .. } => {
         let value = term.value;
