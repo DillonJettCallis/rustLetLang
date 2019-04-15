@@ -143,7 +143,11 @@ fn compile_block(context: &mut ModuleContext, func: &mut FuncContext, block: &Ve
         let mut else_body = compile_block(context, func, else_block);
 
         if !else_body.is_empty() {
-          then_body.push(Instruction::Jump { jump: else_body.len() as i32 });
+          if let Some(Instruction::Return) = then_body.last() {
+
+          } else {
+            then_body.push(Instruction::Jump { jump: else_body.len() as i32 });
+          }
         }
 
         body.push(Instruction::Branch {jump: then_body.len() as i32});

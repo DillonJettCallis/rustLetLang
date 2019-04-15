@@ -16,7 +16,7 @@ fun higher(op: {Float, Float -> Float}): Float = {
 
 fun pow(base: Float, power: Float): Float = {
   fun recurse(prev: Float, steps: Float): Float = {
-    if (steps <= 0) prev else recurse(prev + base, steps - 1)
+    if (steps <= 0) prev else recurse(prev * base, steps - 1)
   }
 
   recurse(base, power)
