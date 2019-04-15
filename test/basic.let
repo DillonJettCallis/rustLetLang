@@ -3,7 +3,7 @@ public fun main(): Float = {
     let outside = 2;
 
     let x = higher({a, b -> Float => a + b * outside});
-    pow(2, 8)
+    pow(2, 8) + x
 }
 
 fun higher(op: {Float, Float -> Float}): Float = {

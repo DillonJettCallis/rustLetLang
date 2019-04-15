@@ -93,12 +93,9 @@ impl FunctionRef {
 }
 
 pub struct BitFunction {
-  pub package: String,
-  pub module: String,
-  pub name: String,
+  pub func_ref: FunctionRef,
 
   pub max_locals: LocalId,
-  pub shape: Shape,
   pub body: Vec<Instruction>,
   pub source: Vec<SourcePoint>,
 }
@@ -108,7 +105,7 @@ impl BitFunction {
   pub fn debug(&self, module: &BitModule) -> Result<(), SimpleError> {
     let mut writer = io::stderr();
 
-    writer.write_all(format!("{}: {}\n", self.name, self.shape.pretty()).as_bytes())
+    writer.write_all(format!("{}: {}\n", self.func_ref.pretty(), self.func_ref.shape.pretty()).as_bytes())
       .map_err(|err| SimpleError::from(err))?;
 
     Instruction::pretty_print(module, &self.body, &mut writer)?;

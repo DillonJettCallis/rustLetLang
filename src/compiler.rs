@@ -94,12 +94,15 @@ pub fn compile(mut module: IrModule) -> Result<BitModule, SimpleError> {
     let body = compile_block(&mut context, &mut func_context, &raw_func.body);
 
     functions.insert(name.clone(), Rc::new(BitFunction {
-      package: module.package.clone(),
-      module: module.name.clone(),
-      name: name.clone(),
+      func_ref: FunctionRef {
+        package: module.package.clone(),
+        module: module.name.clone(),
+        name: name.clone(),
+
+        shape: raw_func.shape.clone(),
+      },
 
       max_locals: func_context.max_locals,
-      shape: raw_func.shape.clone(),
       body,
       source: Vec::new(),
     }));
