@@ -16,16 +16,36 @@ pub type ConstantId = u32;
 
 pub struct BitApplication {
   pub packages: HashMap<String, BitPackage>,
-  pub main: (String, String),
+  main: FunctionRef,
 }
 
 impl BitApplication {
 
-  pub fn new(main_package: String, main_module: String) -> BitApplication {
-    BitApplication{
+  pub fn new(main: FunctionRef) -> BitApplication {
+    BitApplication {
       packages: HashMap::new(),
-      main: (main_package, main_module)
+      main
     }
+  }
+
+  pub fn lookup_main(&self) -> Result<Rc<RunFunction>, SimpleError> {
+    self.lookup_function(&self.main)
+  }
+
+  pub fn lookup_module(&self, func: &FunctionRef) -> Result<&BitModule, SimpleError> {
+    self.packages.get(&func.package)
+      .and_then(|package| package.modules.get(&func.module))
+      .ok_or_else(|| SimpleError::new("FunctionRef Module lookup failed"))
+  }
+
+  pub fn lookup_function(&self, func: &FunctionRef) -> Result<Rc<RunFunction>, SimpleError> {
+    let func = self.packages.get(&func.package)
+      .and_then(|package| package.modules.get(&func.module))
+      .and_then(|module| module.functions.get(&func.name))
+      .ok_or_else(|| SimpleError::new("FunctionRef Module lookup failed"))?
+      .clone();
+
+    Ok(func)
   }
 }
 

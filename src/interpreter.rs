@@ -11,6 +11,7 @@ use bytecode::*;
 use runtime::Value;
 use shapes::*;
 use shapes::Shape::SimpleFunctionShape;
+use lib_core::core_runtime;
 
 pub trait RunFunction {
 
@@ -18,7 +19,9 @@ pub trait RunFunction {
 
   fn get_shape(&self) -> &Shape;
 
-  fn unwrap_as_bit_function(&self) -> Option<(&BitFunction, Vec<Value>)>;
+  fn unwrap_as_bit_function(&self) -> Option<&BitFunction>;
+
+  fn unwrap_closure(&self) -> (FunctionRef, Vec<Value>);
 
 }
 
@@ -30,34 +33,17 @@ impl Debug for RunFunction {
 
 pub struct Machine {
   app: BitApplication,
-  core_functions: HashMap<String, Rc<RunFunction>>,
 }
 
 impl Machine {
 
-  pub fn new(app: BitApplication) -> Machine {
-    let mut core_functions: HashMap<String, Rc<RunFunction>> = HashMap::new();
-    core_functions.insert(String::from("+"), Rc::new(float_op("+", |l, r| l + r)));
-    core_functions.insert(String::from("-"), Rc::new(float_op("-", |l, r| l - r)));
-    core_functions.insert(String::from("*"), Rc::new(float_op("*", |l, r| l * r)));
-    core_functions.insert(String::from("/"), Rc::new(float_op("/", |l, r| l / r)));
-
-    core_functions.insert(String::from("=="), Rc::new(float_compare_op("==", |l, r| l == r)));
-    core_functions.insert(String::from("!="), Rc::new(float_compare_op("!=", |l, r| l != r)));
-    core_functions.insert(String::from(">"), Rc::new(float_compare_op(">", |l, r| l > r)));
-    core_functions.insert(String::from(">="), Rc::new(float_compare_op(">=", |l, r| l >= r)));
-    core_functions.insert(String::from("<"), Rc::new(float_compare_op("<", |l, r| l < r)));
-    core_functions.insert(String::from("<="), Rc::new(float_compare_op("<=", |l, r| l <= r)));
-    Machine{app, core_functions}
+  pub fn new(mut app: BitApplication) -> Machine {
+    app.packages.insert(String::from("Core"), core_runtime());
+    Machine{app}
   }
 
   pub fn run_main(&self) -> Result<Value, SimpleError> {
-    let (ref main_package, ref main_module) = self.app.main;
-
-    let main = self.app.packages.get(main_package)
-      .and_then(|package| package.modules.get(main_module))
-      .and_then(|module| module.functions.get("main"))
-      .ok_or_else(|| SimpleError::new("No main function"))?;
+    let main = self.app.lookup_main()?;
 
     main.execute(self, vec![])
   }
@@ -71,7 +57,7 @@ impl Machine {
       let func = module.functions.get(&src_func_ref.name)
         .ok_or_else(|| SimpleError::new("FunctionRef Function lookup failed"))?;
 
-      if let Some((func, _)) = func.unwrap_as_bit_function() {
+      if let Some(func) = func.unwrap_as_bit_function() {
         let mut index = 0usize;
         let mut stack: Vec<Value> = Vec::new();
         locals.resize(func.max_locals as usize, Value::Null);
@@ -138,16 +124,11 @@ impl Machine {
               locals[index] = value;
             },
             Instruction::CallStatic { func_id } => {
-              let func_ref: &FunctionRef = module.function_refs.get(func_id as usize)
-                .ok_or_else(|| SimpleError::new("Invalid bytecode. Invalid function id"))?;
+              let func_ref = module.function_refs.get(func_id as usize)
+                .ok_or_else(|| SimpleError::new("Invalid bytecode. Invalid function id"))?
+                .clone();
 
-              let call_func = self.core_functions.get(&func_ref.name)
-                .or_else(|| module.functions.get(&func_ref.name))
-                .ok_or_else(|| SimpleError::new("Invalid bytecode. Function with name not found"))?;
-
-              let shape = call_func.get_shape();
-
-              if let Shape::SimpleFunctionShape { args, result: _ } = shape {
+              if let Shape::SimpleFunctionShape { args, result: _ } = func_ref.shape.clone() {
                 let size = args.len();
                 let mut params: Vec<Value> = Vec::with_capacity(size);
 
@@ -161,16 +142,13 @@ impl Machine {
                 params.reverse();
 
                 if let Instruction::Return = func.body[index + 1] {
-                  if let Some((new_func, mut new_locals)) = call_func.unwrap_as_bit_function() {
-                    src_func_ref = new_func.func_ref.clone();
-                    new_locals.append(&mut params);
-                    locals = new_locals;
-                    continue 'outer;
-                  }
+                  src_func_ref = func_ref;
+                  locals = params;
+                  continue 'outer;
+                } else {
+                  let result = self.execute(func_ref, params)?;
+                  stack.push(result);
                 }
-
-                let result = call_func.execute(&self, params)?;
-                stack.push(result);
               } else {
                 return Err(SimpleError::new("Invalid bytecode. CallStatic is not function"))
               }
@@ -192,12 +170,11 @@ impl Machine {
 
               if let Value::Function(call_func) = maybe_func {
                 if let Instruction::Return = func.body[index + 1] {
-                  if let Some((new_func, mut new_locals)) = call_func.unwrap_as_bit_function() {
-                    src_func_ref = new_func.func_ref.clone();
-                    new_locals.append(&mut params);
-                    locals = new_locals;
-                    continue 'outer;
-                  }
+                  let (func_ref, mut new_locals) = call_func.unwrap_closure();
+                  src_func_ref = func_ref;
+                  new_locals.append(&mut params);
+                  locals = new_locals;
+                  continue 'outer;
                 }
 
                 let result = call_func.execute(&self, params)?;
@@ -210,10 +187,7 @@ impl Machine {
               let func_ref: &FunctionRef = module.function_refs.get(func_id as usize)
                 .ok_or_else(|| SimpleError::new("Invalid bytecode. Invalid function id"))?;
 
-              let func = self.core_functions.get(&func_ref.name)
-                .or_else(|| module.functions.get(&func_ref.name))
-                .ok_or_else(|| SimpleError::new("Invalid bytecode. Function with name not found"))?
-                .clone();
+              let func = self.app.lookup_function(func_ref)?;
 
               let mut params = Vec::with_capacity(param_count as usize);
 
@@ -296,8 +270,12 @@ impl RunFunction for BitFunction {
     &self.func_ref.shape
   }
 
-  fn unwrap_as_bit_function(&self) -> Option<(&BitFunction, Vec<Value>)> {
-    Some((&self, Vec::new()))
+  fn unwrap_as_bit_function(&self) -> Option<&BitFunction> {
+    Some(&self)
+  }
+
+  fn unwrap_closure(&self) -> (FunctionRef, Vec<Value>) {
+    (self.func_ref.clone(), Vec::new())
   }
 }
 
@@ -318,11 +296,14 @@ impl RunFunction for ClosureFunction {
     &self.func.get_shape()
   }
 
-  fn unwrap_as_bit_function(&self) -> Option<(&BitFunction, Vec<Value>)> {
-    self.func.unwrap_as_bit_function().map(|(func, mut args)| {
-      args.append(&mut self.closures.clone());
-      (func, args)
-    })
+  fn unwrap_as_bit_function(&self) -> Option<&BitFunction> {
+    self.func.unwrap_as_bit_function()
+  }
+
+  fn unwrap_closure(&self) -> (FunctionRef, Vec<Value>) {
+    let (func, mut args) = self.func.unwrap_closure();
+    args.append(&mut self.closures.clone());
+    (func, args)
   }
 }
 
@@ -342,17 +323,20 @@ impl RunFunction for RecursiveFunction {
     &self.func.get_shape()
   }
 
-  fn unwrap_as_bit_function(&self) -> Option<(&BitFunction, Vec<Value>)> {
-    self.func.unwrap_as_bit_function().map(|(func, mut args)| {
-      args.push(Value::Function(Rc::new(RecursiveFunction{func: self.func.clone()})));
-      (func, args)
-    })
+  fn unwrap_as_bit_function(&self) -> Option<&BitFunction> {
+    self.func.unwrap_as_bit_function()
+  }
+
+  fn unwrap_closure(&self) -> (FunctionRef, Vec<Value>) {
+    let (func, mut args) = self.func.unwrap_closure();
+    args.push(Value::Function(Rc::new(RecursiveFunction{func: self.func.clone()})));
+    (func, args)
   }
 }
 
-struct NativeFunction<T> {
-  func: T,
-  shape: Shape,
+pub struct NativeFunction<T> {
+  pub func: T,
+  pub func_ref: FunctionRef,
 }
 
 impl<T: Fn(&Machine, Vec<Value>) -> Result<Value, SimpleError>> RunFunction for NativeFunction<T> {
@@ -361,61 +345,14 @@ impl<T: Fn(&Machine, Vec<Value>) -> Result<Value, SimpleError>> RunFunction for 
   }
 
   fn get_shape(&self) -> &Shape {
-    &self.shape
+    &self.func_ref.shape
   }
 
-  fn unwrap_as_bit_function(&self) -> Option<(&BitFunction, Vec<Value>)> {
+  fn unwrap_as_bit_function(&self) -> Option<&BitFunction> {
     None
   }
-}
 
-fn float_op<Op: Fn(f64, f64) -> f64>(name: &'static str, op: Op) -> impl RunFunction {
-  let func = move |machine: &Machine, args: Vec<Value>| {
-    if args.len() == 2 {
-      if let Value::Float(first) = args[0] {
-        if let Value::Float(second) = args[1] {
-          let result = op(first, second);
-          return Ok(Value::Float(result));
-        }
-      }
-    }
-
-    return Err(SimpleError::new(format!("{} takes exactly two float arguments", name)));
-  };
-
-  NativeFunction {
-    func,
-    shape: Shape::SimpleFunctionShape {
-      args: vec![shape_float(), shape_float()],
-      result: Box::new(shape_float()),
-    },
-  }
-}
-
-fn float_compare_op<Op: Fn(f64, f64) -> bool>(name: &'static str, op: Op) -> impl RunFunction {
-  let func = move |machine: &Machine, args: Vec<Value>| {
-    if args.len() == 2 {
-      if let Value::Float(first) = args[0] {
-        if let Value::Float(second) = args[1] {
-          let result = op(first, second);
-          let value = if result {
-            Value::True
-          } else {
-            Value::False
-          };
-          return Ok(value);
-        }
-      }
-    }
-
-    return Err(SimpleError::new(format!("{} takes exactly two float arguments", name)));
-  };
-
-  NativeFunction {
-    func,
-    shape: Shape::SimpleFunctionShape {
-      args: vec![shape_float(), shape_float()],
-      result: Box::new(shape_boolean()),
-    },
+  fn unwrap_closure(&self) -> (FunctionRef, Vec<Value>) {
+    (self.func_ref.clone(), Vec::new())
   }
 }

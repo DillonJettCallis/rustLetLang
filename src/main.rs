@@ -18,7 +18,7 @@ use interpreter::RunFunction;
 use ir::compile_ir_module;
 use parser::parse;
 use runtime::Value;
-use shapes::BaseShapeKind;
+use shapes::{BaseShapeKind, shape_unknown, shape_float};
 use shapes::Shape;
 use typechecker::check_module;
 
@@ -32,6 +32,7 @@ mod runtime;
 mod compiler;
 mod optimize;
 mod ir;
+mod lib_core;
 
 fn main() {
   match compile_test() {
@@ -46,7 +47,16 @@ fn compile_test() -> Result<Value, SimpleError> {
   let package_name = String::from("test");
 
   let package = compile_package("test", "/home/dillon/projects/rustLetLang/test")?;
-  let mut app = BitApplication::new(package_name.clone(), module_name);
+  let mut app = BitApplication::new(FunctionRef {
+    package: package_name.clone(),
+    module: module_name.clone(),
+    name: String::from("main"),
+
+    shape: Shape::SimpleFunctionShape {
+      args: vec![],
+      result: Box::new(shape_float()),
+    }
+  });
   app.packages.insert(package_name, package);
 
   let machine = Machine::new(app);
