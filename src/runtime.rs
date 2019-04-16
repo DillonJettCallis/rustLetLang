@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use interpreter::RunFunction;
+use interpreter::FunctionHandle;
 use shapes::BaseShapeKind;
 use shapes::Shape;
 
@@ -11,6 +11,6 @@ pub enum Value {
   False,
   String(Rc<String>),
   Float(f64),
-  Function(Rc<RunFunction>),
+  Function(Rc<FunctionHandle>),
 }
 

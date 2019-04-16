@@ -25,7 +25,14 @@ pub trait RunFunction {
 
 }
 
-impl Debug for RunFunction {
+
+pub trait FunctionHandle {
+
+  fn with(&self, args: Vec<Value>) -> (&FunctionRef, Vec<Value>);
+
+}
+
+impl Debug for FunctionHandle {
   fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
     f.write_str("<function>")
   }
@@ -50,14 +57,11 @@ impl Machine {
 
   pub fn execute(&self, mut src_func_ref: FunctionRef, mut locals: Vec<Value>) -> Result<Value, SimpleError> {
     'outer: loop {
-      let module = self.app.packages.get(&src_func_ref.package)
-        .and_then(|package| package.modules.get(&src_func_ref.module))
-        .ok_or_else(|| SimpleError::new("FunctionRef Module lookup failed"))?;
-
-      let func = module.functions.get(&src_func_ref.name)
-        .ok_or_else(|| SimpleError::new("FunctionRef Function lookup failed"))?;
+      let func = self.app.lookup_function(&src_func_ref)?;
 
       if let Some(func) = func.unwrap_as_bit_function() {
+        let module = self.app.lookup_module(&src_func_ref)?;
+
         let mut index = 0usize;
         let mut stack: Vec<Value> = Vec::new();
         locals.resize(func.max_locals as usize, Value::Null);
@@ -100,11 +104,7 @@ impl Machine {
             Instruction::LoadConstFunction { const_id } => {
               let func_ref = module.lookup_function(const_id)?;
 
-              let boxed = module.functions.get(&func_ref.name)
-                .ok_or_else(|| SimpleError::new("Invalid bytecode. Invalid Function constant id"))?
-                .clone();
-
-              stack.push(Value::Function(boxed));
+              stack.push(Value::Function(Rc::new(func_ref)));
             },
             Instruction::LoadConstFloat { value } => stack.push(Value::Float(value)),
             Instruction::LoadValue { local } => {
@@ -168,26 +168,24 @@ impl Machine {
               let maybe_func: Value = stack.pop()
                 .ok_or_else(|| SimpleError::new("Invalid bytecode. Invalid built in function id"))?;
 
-              if let Value::Function(call_func) = maybe_func {
+              if let Value::Function(handle) = maybe_func {
+                let (func_ref, new_locals) = handle.with(params);
+
                 if let Instruction::Return = func.body[index + 1] {
-                  let (func_ref, mut new_locals) = call_func.unwrap_closure();
-                  src_func_ref = func_ref;
-                  new_locals.append(&mut params);
+                  src_func_ref = func_ref.clone();
                   locals = new_locals;
                   continue 'outer;
                 }
 
-                let result = call_func.execute(&self, params)?;
+                let result = self.app.lookup_function(func_ref)?.execute(&self, new_locals)?;
                 stack.push(result);
               } else {
                 return Err(SimpleError::new("Invalid bytecode. CallDynamic is not function"))
               }
             },
             Instruction::BuildClosure { param_count, func_id } => {
-              let func_ref: &FunctionRef = module.function_refs.get(func_id as usize)
+              let func = module.function_refs.get(func_id as usize)
                 .ok_or_else(|| SimpleError::new("Invalid bytecode. Invalid function id"))?;
-
-              let func = self.app.lookup_function(func_ref)?;
 
               let mut params = Vec::with_capacity(param_count as usize);
 
@@ -199,8 +197,8 @@ impl Machine {
 
               params.reverse();
 
-              let closure = ClosureFunction {
-                func,
+              let closure = ClosureHandle {
+                func: func.clone(),
                 closures: params
               };
 
@@ -210,7 +208,7 @@ impl Machine {
               let maybe_func = stack.pop().ok_or_else(|| SimpleError::new("Invalid bytecode. Attempt to BuildRecursiveFunction of empty stack"))?;
 
               if let Value::Function(func) = maybe_func {
-                stack.push(Value::Function(Rc::new(RecursiveFunction { func })));
+                stack.push(Value::Function(Rc::new(RecursiveHandle { func })));
               } else {
                 return Err(SimpleError::new("Invalid bytecode. BuildRecursiveFunction is not function"))
               }
@@ -279,58 +277,37 @@ impl RunFunction for BitFunction {
   }
 }
 
-struct ClosureFunction {
-  func: Rc<RunFunction>,
+impl FunctionHandle for FunctionRef {
+  fn with(&self, args: Vec<Value>) -> (&FunctionRef, Vec<Value>) {
+    (&self, args)
+  }
+}
+
+struct ClosureHandle {
+  func: FunctionRef,
   closures: Vec<Value>,
 }
 
-impl RunFunction for ClosureFunction {
+impl FunctionHandle for ClosureHandle {
 
-  fn execute(&self, machine: &Machine, mut args: Vec<Value>) -> Result<Value, SimpleError> {
+  fn with(&self, mut args: Vec<Value>) -> (&FunctionRef, Vec<Value>) {
     let mut locals = self.closures.clone();
     locals.append(&mut args);
-    self.func.execute(machine, locals)
-  }
-
-  fn get_shape(&self) -> &Shape {
-    &self.func.get_shape()
-  }
-
-  fn unwrap_as_bit_function(&self) -> Option<&BitFunction> {
-    self.func.unwrap_as_bit_function()
-  }
-
-  fn unwrap_closure(&self) -> (FunctionRef, Vec<Value>) {
-    let (func, mut args) = self.func.unwrap_closure();
-    args.append(&mut self.closures.clone());
-    (func, args)
+    (&self.func, locals)
   }
 }
 
-struct RecursiveFunction {
-  func: Rc<RunFunction>,
+struct RecursiveHandle {
+  func: Rc<FunctionHandle>,
 }
 
-impl RunFunction for RecursiveFunction {
+impl FunctionHandle for RecursiveHandle {
 
-  fn execute(&self, machine: &Machine, mut args: Vec<Value>) -> Result<Value, SimpleError> {
-    let mut locals = vec![Value::Function(Rc::new(RecursiveFunction{func: self.func.clone()}))];
+  fn with(&self, mut args: Vec<Value>) -> (&FunctionRef, Vec<Value>) {
+    let mut locals = Vec::with_capacity(args.len() + 1);
+    locals.push(Value::Function(Rc::new(RecursiveHandle{func: self.func.clone()})));
     locals.append(&mut args);
-    self.func.execute(machine, locals)
-  }
-
-  fn get_shape(&self) -> &Shape {
-    &self.func.get_shape()
-  }
-
-  fn unwrap_as_bit_function(&self) -> Option<&BitFunction> {
-    self.func.unwrap_as_bit_function()
-  }
-
-  fn unwrap_closure(&self) -> (FunctionRef, Vec<Value>) {
-    let (func, mut args) = self.func.unwrap_closure();
-    args.push(Value::Function(Rc::new(RecursiveFunction{func: self.func.clone()})));
-    (func, args)
+    self.func.with(locals)
   }
 }
 
