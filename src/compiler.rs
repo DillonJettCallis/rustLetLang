@@ -83,7 +83,7 @@ fn find_modules(base: &str, package: &str) -> Result<Vec<Module>, SimpleError> {
 pub fn compile(mut module: IrModule) -> Result<BitModule, SimpleError> {
   let mut context = ModuleContext::new();
   let optimizer = Optimizer::new();
-  let mut functions = HashMap::<String, Rc<RunFunction>>::new();
+  let mut functions = HashMap::<String, Box<RunFunction>>::new();
 
   for (name, mut raw_func) in module.functions {
     optimizer.optimize(&mut raw_func);
@@ -93,7 +93,7 @@ pub fn compile(mut module: IrModule) -> Result<BitModule, SimpleError> {
 
     let body = compile_block(&mut context, &mut func_context, &raw_func.body);
 
-    functions.insert(name.clone(), Rc::new(BitFunction {
+    functions.insert(name.clone(), Box::new(BitFunction {
       func_ref: FunctionRef {
         package: module.package.clone(),
         module: module.name.clone(),

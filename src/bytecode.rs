@@ -28,7 +28,7 @@ impl BitApplication {
     }
   }
 
-  pub fn lookup_main(&self) -> Result<Rc<RunFunction>, SimpleError> {
+  pub fn lookup_main(&self) -> Result<&Box<RunFunction>, SimpleError> {
     self.lookup_function(&self.main)
   }
 
@@ -38,14 +38,11 @@ impl BitApplication {
       .ok_or_else(|| SimpleError::new("FunctionRef Module lookup failed"))
   }
 
-  pub fn lookup_function(&self, func: &FunctionRef) -> Result<Rc<RunFunction>, SimpleError> {
-    let func = self.packages.get(&func.package)
+  pub fn lookup_function(&self, func: &FunctionRef) -> Result<&Box<RunFunction>, SimpleError> {
+    self.packages.get(&func.package)
       .and_then(|package| package.modules.get(&func.module))
       .and_then(|module| module.functions.get(&func.name))
-      .ok_or_else(|| SimpleError::new("FunctionRef Module lookup failed"))?
-      .clone();
-
-    Ok(func)
+      .ok_or_else(|| SimpleError::new("FunctionRef Module lookup failed"))
   }
 }
 
@@ -63,7 +60,7 @@ impl BitPackage {
 pub struct BitModule {
   pub string_constants: Vec<String>,
   pub function_refs: Vec<FunctionRef>,
-  pub functions: HashMap<String, Rc<RunFunction>>,
+  pub functions: HashMap<String, Box<RunFunction>>,
   pub shape_refs: Vec<Shape>,
 }
 

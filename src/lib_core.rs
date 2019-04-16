@@ -9,18 +9,18 @@ use ast::Expression::BinaryOp;
 
 pub fn core_runtime() -> BitPackage {
 
-  let mut functions: HashMap<String, Rc<RunFunction>> = HashMap::new();
-  functions.insert(String::from("+"), Rc::new(float_op("+", |l, r| l + r)));
-  functions.insert(String::from("-"), Rc::new(float_op("-", |l, r| l - r)));
-  functions.insert(String::from("*"), Rc::new(float_op("*", |l, r| l * r)));
-  functions.insert(String::from("/"), Rc::new(float_op("/", |l, r| l / r)));
+  let mut functions: HashMap<String, Box<RunFunction>> = HashMap::new();
+  functions.insert(String::from("+"), Box::new(float_op("+", |l, r| l + r)));
+  functions.insert(String::from("-"), Box::new(float_op("-", |l, r| l - r)));
+  functions.insert(String::from("*"), Box::new(float_op("*", |l, r| l * r)));
+  functions.insert(String::from("/"), Box::new(float_op("/", |l, r| l / r)));
 
-  functions.insert(String::from("=="), Rc::new(float_compare_op("==", |l, r| l == r)));
-  functions.insert(String::from("!="), Rc::new(float_compare_op("!=", |l, r| l != r)));
-  functions.insert(String::from(">"), Rc::new(float_compare_op(">", |l, r| l > r)));
-  functions.insert(String::from(">="), Rc::new(float_compare_op(">=", |l, r| l >= r)));
-  functions.insert(String::from("<"), Rc::new(float_compare_op("<", |l, r| l < r)));
-  functions.insert(String::from("<="), Rc::new(float_compare_op("<=", |l, r| l <= r)));
+  functions.insert(String::from("=="), Box::new(float_compare_op("==", |l, r| l == r)));
+  functions.insert(String::from("!="), Box::new(float_compare_op("!=", |l, r| l != r)));
+  functions.insert(String::from(">"), Box::new(float_compare_op(">", |l, r| l > r)));
+  functions.insert(String::from(">="), Box::new(float_compare_op(">=", |l, r| l >= r)));
+  functions.insert(String::from("<"), Box::new(float_compare_op("<", |l, r| l < r)));
+  functions.insert(String::from("<="), Box::new(float_compare_op("<=", |l, r| l <= r)));
 
   let module = BitModule {
     functions,
