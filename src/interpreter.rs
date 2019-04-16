@@ -17,11 +17,7 @@ pub trait RunFunction {
 
   fn execute(&self, machine: &Machine, args: Vec<Value>) -> Result<Value, SimpleError>;
 
-  fn get_shape(&self) -> &Shape;
-
   fn unwrap_as_bit_function(&self) -> Option<&BitFunction>;
-
-  fn unwrap_closure(&self) -> (FunctionRef, Vec<Value>);
 
 }
 
@@ -264,16 +260,8 @@ impl RunFunction for BitFunction {
     machine.execute(self.func_ref.clone(), args)
   }
 
-  fn get_shape(&self) -> &Shape {
-    &self.func_ref.shape
-  }
-
   fn unwrap_as_bit_function(&self) -> Option<&BitFunction> {
     Some(&self)
-  }
-
-  fn unwrap_closure(&self) -> (FunctionRef, Vec<Value>) {
-    (self.func_ref.clone(), Vec::new())
   }
 }
 
@@ -321,15 +309,7 @@ impl<T: Fn(&Machine, Vec<Value>) -> Result<Value, SimpleError>> RunFunction for 
     (self.func)(machine, args)
   }
 
-  fn get_shape(&self) -> &Shape {
-    &self.func_ref.shape
-  }
-
   fn unwrap_as_bit_function(&self) -> Option<&BitFunction> {
     None
-  }
-
-  fn unwrap_closure(&self) -> (FunctionRef, Vec<Value>) {
-    (self.func_ref.clone(), Vec::new())
   }
 }
