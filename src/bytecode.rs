@@ -16,7 +16,7 @@ pub type ConstantId = u32;
 
 pub struct BitApplication {
   pub packages: HashMap<String, BitPackage>,
-  main: FunctionRef,
+  pub main: FunctionRef,
 }
 
 impl BitApplication {
@@ -28,17 +28,13 @@ impl BitApplication {
     }
   }
 
-  pub fn lookup_main(&self) -> Result<&Box<RunFunction>, SimpleError> {
-    self.lookup_function(&self.main)
-  }
-
   pub fn lookup_module(&self, func: &FunctionRef) -> Result<&BitModule, SimpleError> {
     self.packages.get(&func.package)
       .and_then(|package| package.modules.get(&func.module))
       .ok_or_else(|| SimpleError::new("FunctionRef Module lookup failed"))
   }
 
-  pub fn lookup_function(&self, func: &FunctionRef) -> Result<&Box<RunFunction>, SimpleError> {
+  pub fn lookup_function(&self, func: &FunctionRef) -> Result<&RunFunction, SimpleError> {
     self.packages.get(&func.package)
       .and_then(|package| package.modules.get(&func.module))
       .and_then(|module| module.functions.get(&func.name))
@@ -60,7 +56,7 @@ impl BitPackage {
 pub struct BitModule {
   pub string_constants: Vec<String>,
   pub function_refs: Vec<FunctionRef>,
-  pub functions: HashMap<String, Box<RunFunction>>,
+  pub functions: HashMap<String, RunFunction>,
   pub shape_refs: Vec<Shape>,
 }
 

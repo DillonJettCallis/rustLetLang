@@ -9,18 +9,18 @@ use ast::Expression::BinaryOp;
 
 pub fn core_runtime() -> BitPackage {
 
-  let mut functions: HashMap<String, Box<RunFunction>> = HashMap::new();
-  functions.insert(String::from("+"), Box::new(float_op("+", |l, r| l + r)));
-  functions.insert(String::from("-"), Box::new(float_op("-", |l, r| l - r)));
-  functions.insert(String::from("*"), Box::new(float_op("*", |l, r| l * r)));
-  functions.insert(String::from("/"), Box::new(float_op("/", |l, r| l / r)));
+  let mut functions: HashMap<String, RunFunction> = HashMap::new();
+  functions.insert(String::from("+"), float_op("+", |l, r| l + r));
+  functions.insert(String::from("-"), float_op("-", |l, r| l - r));
+  functions.insert(String::from("*"), float_op("*", |l, r| l * r));
+  functions.insert(String::from("/"), float_op("/", |l, r| l / r));
 
-  functions.insert(String::from("=="), Box::new(float_compare_op("==", |l, r| l == r)));
-  functions.insert(String::from("!="), Box::new(float_compare_op("!=", |l, r| l != r)));
-  functions.insert(String::from(">"), Box::new(float_compare_op(">", |l, r| l > r)));
-  functions.insert(String::from(">="), Box::new(float_compare_op(">=", |l, r| l >= r)));
-  functions.insert(String::from("<"), Box::new(float_compare_op("<", |l, r| l < r)));
-  functions.insert(String::from("<="), Box::new(float_compare_op("<=", |l, r| l <= r)));
+  functions.insert(String::from("=="), float_compare_op("==", |l, r| l == r));
+  functions.insert(String::from("!="), float_compare_op("!=", |l, r| l != r));
+  functions.insert(String::from(">"), float_compare_op(">", |l, r| l > r));
+  functions.insert(String::from(">="), float_compare_op(">=", |l, r| l >= r));
+  functions.insert(String::from("<"), float_compare_op("<", |l, r| l < r));
+  functions.insert(String::from("<="), float_compare_op("<=", |l, r| l <= r));
 
   let module = BitModule {
     functions,
@@ -39,8 +39,8 @@ pub fn core_runtime() -> BitPackage {
 }
 
 
-fn float_op<Op: Fn(f64, f64) -> f64>(name: &'static str, op: Op) -> impl RunFunction {
-  let func = move |machine: &Machine, args: Vec<Value>| {
+fn float_op<Op: Fn(f64, f64) -> f64 + 'static>(name: &'static str, op: Op) -> RunFunction {
+  let func = Box::new(move |machine: &Machine, args: Vec<Value>| {
     if args.len() == 2 {
       if let Value::Float(first) = args[0] {
         if let Value::Float(second) = args[1] {
@@ -51,9 +51,9 @@ fn float_op<Op: Fn(f64, f64) -> f64>(name: &'static str, op: Op) -> impl RunFunc
     }
 
     return Err(SimpleError::new(format!("{} takes exactly two float arguments", name)));
-  };
+  });
 
-  NativeFunction {
+  RunFunction::NativeFunction(NativeFunction {
     func,
     func_ref: FunctionRef {
       package: String::from("Core"),
@@ -65,11 +65,11 @@ fn float_op<Op: Fn(f64, f64) -> f64>(name: &'static str, op: Op) -> impl RunFunc
         result: Box::new(shape_float()),
       },
     },
-  }
+  })
 }
 
-fn float_compare_op<Op: Fn(f64, f64) -> bool>(name: &'static str, op: Op) -> impl RunFunction {
-  let func = move |machine: &Machine, args: Vec<Value>| {
+fn float_compare_op<Op: Fn(f64, f64) -> bool + 'static>(name: &'static str, op: Op) -> RunFunction {
+  let func = Box::new(move |machine: &Machine, args: Vec<Value>| {
     if args.len() == 2 {
       if let Value::Float(first) = args[0] {
         if let Value::Float(second) = args[1] {
@@ -85,9 +85,9 @@ fn float_compare_op<Op: Fn(f64, f64) -> bool>(name: &'static str, op: Op) -> imp
     }
 
     return Err(SimpleError::new(format!("{} takes exactly two float arguments", name)));
-  };
+  });
 
-  NativeFunction {
+  RunFunction::NativeFunction(NativeFunction {
     func,
     func_ref: FunctionRef {
       package: String::from("Core"),
@@ -99,5 +99,5 @@ fn float_compare_op<Op: Fn(f64, f64) -> bool>(name: &'static str, op: Op) -> imp
         result: Box::new(shape_boolean()),
       },
     },
-  }
+  })
 }

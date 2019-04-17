@@ -63,14 +63,3 @@ fn compile_test() -> Result<Value, SimpleError> {
 
   machine.run_main()
 }
-
-fn ir_compile_test() -> Result<Value, SimpleError> {
-
-  let parsed = parse(&Path::new("/home/dillon/projects/rustLetLang/test/basic.let"), "test", "basic")?;
-  let checked = check_module(parsed)?;
-  let compiled = compile_ir_module(&checked)?;
-
-  compiled.debug()?;
-
-  Ok(Value::Float(10f64))
-}

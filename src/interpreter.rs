@@ -13,19 +13,14 @@ use shapes::*;
 use shapes::Shape::SimpleFunctionShape;
 use lib_core::core_runtime;
 
-pub trait RunFunction {
-
-  fn execute(&self, machine: &Machine, args: Vec<Value>) -> Result<Value, SimpleError>;
-
-  fn unwrap_as_bit_function(&self) -> Option<&BitFunction>;
-
+pub enum RunFunction {
+  BitFunction(BitFunction),
+  NativeFunction(NativeFunction),
 }
 
 
 pub trait FunctionHandle {
-
   fn with(&self, args: Vec<Value>) -> (&FunctionRef, Vec<Value>);
-
 }
 
 impl Debug for FunctionHandle {
@@ -39,96 +34,116 @@ pub struct Machine {
 }
 
 impl Machine {
-
   pub fn new(mut app: BitApplication) -> Machine {
     app.packages.insert(String::from("Core"), core_runtime());
-    Machine{app}
+    Machine { app }
   }
 
   pub fn run_main(&self) -> Result<Value, SimpleError> {
-    let main = self.app.lookup_main()?;
-
-    main.execute(self, vec![])
+    self.execute(self.app.main.clone(), vec![])
   }
 
   pub fn execute(&self, mut src_func_ref: FunctionRef, mut locals: Vec<Value>) -> Result<Value, SimpleError> {
     'outer: loop {
-      let func = self.app.lookup_function(&src_func_ref)?;
+      match self.app.lookup_function(&src_func_ref)? {
+        RunFunction::BitFunction(func) => {
+          let module = self.app.lookup_module(&src_func_ref)?;
 
-      if let Some(func) = func.unwrap_as_bit_function() {
-        let module = self.app.lookup_module(&src_func_ref)?;
+          let mut index = 0usize;
+          let mut stack: Vec<Value> = Vec::new();
+          locals.resize(func.max_locals as usize, Value::Null);
 
-        let mut index = 0usize;
-        let mut stack: Vec<Value> = Vec::new();
-        locals.resize(func.max_locals as usize, Value::Null);
+          while index < func.body.len() {
+            match func.body[index] {
+              Instruction::NoOp => {}
+              Instruction::Duplicate => {
+                let last = stack.last()
+                  .ok_or_else(|| SimpleError::new("Invalid bytecode. Attempt to duplicate empty stack"))?
+                  .clone();
+                stack.push(last);
+              }
+              Instruction::Pop => {
+                stack.pop()
+                  .ok_or_else(|| SimpleError::new("Invalid bytecode in module. Attempt to pop empty stack"))?;
+              }
+              Instruction::Swap => {
+                let first = stack.pop()
+                  .ok_or_else(|| SimpleError::new("Invalid bytecode. Attempt to swap empty stack"))?;
 
-        while index < func.body.len() {
-          match func.body[index] {
-            Instruction::NoOp => {},
-            Instruction::Duplicate => {
-              let last = stack.last()
-                .ok_or_else(|| SimpleError::new("Invalid bytecode. Attempt to duplicate empty stack"))?
-                .clone();
-              stack.push(last);
-            },
-            Instruction::Pop => {
-              stack.pop()
-                .ok_or_else(|| SimpleError::new("Invalid bytecode in module. Attempt to pop empty stack"))?;
-            },
-            Instruction::Swap => {
-              let first = stack.pop()
-                .ok_or_else(|| SimpleError::new("Invalid bytecode. Attempt to swap empty stack"))?;
+                let second = stack.pop()
+                  .ok_or_else(|| SimpleError::new("Invalid bytecode. Attempt to swap stack of 1"))?;
 
-              let second = stack.pop()
-                .ok_or_else(|| SimpleError::new("Invalid bytecode. Attempt to swap stack of 1"))?;
+                stack.push(first);
+                stack.push(second);
+              }
+              Instruction::LoadConstNull => {
+                stack.push(Value::Null);
+              }
+              Instruction::LoadConstTrue => {
+                stack.push(Value::True);
+              }
+              Instruction::LoadConstFalse => {
+                stack.push(Value::False);
+              }
+              Instruction::LoadConstString { const_id } => {
+                stack.push(Value::String(Rc::new(module.lookup_string(const_id)?)));
+              }
+              Instruction::LoadConstFunction { const_id } => {
+                let func_ref = module.lookup_function(const_id)?;
 
-              stack.push(first);
-              stack.push(second);
-            },
-            Instruction::LoadConstNull => {
-              stack.push(Value::Null);
-            },
-            Instruction::LoadConstTrue => {
-              stack.push(Value::True);
-            },
-            Instruction::LoadConstFalse => {
-              stack.push(Value::False);
-            },
-            Instruction::LoadConstString { const_id } => {
-              stack.push(Value::String(Rc::new(module.lookup_string(const_id)?)));
-            },
-            Instruction::LoadConstFunction { const_id } => {
-              let func_ref = module.lookup_function(const_id)?;
+                stack.push(Value::Function(Rc::new(func_ref)));
+              }
+              Instruction::LoadConstFloat { value } => stack.push(Value::Float(value)),
+              Instruction::LoadValue { local } => {
+                let index = local as usize;
 
-              stack.push(Value::Function(Rc::new(func_ref)));
-            },
-            Instruction::LoadConstFloat { value } => stack.push(Value::Float(value)),
-            Instruction::LoadValue { local } => {
-              let index = local as usize;
+                let local: &Value = locals.get(index)
+                  .ok_or_else(|| SimpleError::new("Invalid bytecode. LoadValue of local that doesn't exist"))?;
 
-              let local: &Value = locals.get(index)
-                .ok_or_else(|| SimpleError::new("Invalid bytecode. LoadValue of local that doesn't exist"))?;
+                stack.push(local.clone());
+              }
+              Instruction::StoreValue { local } => {
+                let index = local as usize;
 
-              stack.push(local.clone());
-            },
-            Instruction::StoreValue { local } => {
-              let index = local as usize;
+                let value = stack.pop()
+                  .ok_or_else(|| SimpleError::new("Invalid bytecode. Attempt to StoreValue of empty stack"))?;
 
-              let value = stack.pop()
-                .ok_or_else(|| SimpleError::new("Invalid bytecode. Attempt to StoreValue of empty stack"))?;
+                locals[index] = value;
+              }
+              Instruction::CallStatic { func_id } => {
+                let func_ref = module.function_refs.get(func_id as usize)
+                  .ok_or_else(|| SimpleError::new("Invalid bytecode. Invalid function id"))?
+                  .clone();
 
-              locals[index] = value;
-            },
-            Instruction::CallStatic { func_id } => {
-              let func_ref = module.function_refs.get(func_id as usize)
-                .ok_or_else(|| SimpleError::new("Invalid bytecode. Invalid function id"))?
-                .clone();
+                if let Shape::SimpleFunctionShape { args, result: _ } = func_ref.shape.clone() {
+                  let size = args.len();
+                  let mut params: Vec<Value> = Vec::with_capacity(size);
 
-              if let Shape::SimpleFunctionShape { args, result: _ } = func_ref.shape.clone() {
-                let size = args.len();
-                let mut params: Vec<Value> = Vec::with_capacity(size);
+                  for i in 0..size {
+                    let param = stack.pop()
+                      .ok_or_else(|| SimpleError::new("Invalid bytecode. Not enough args for function"))?;
 
-                for i in 0..size {
+                    params.push(param);
+                  }
+
+                  params.reverse();
+
+                  if let Instruction::Return = func.body[index + 1] {
+                    src_func_ref = func_ref;
+                    locals = params;
+                    continue 'outer;
+                  } else {
+                    let result = self.execute(func_ref, params)?;
+                    stack.push(result);
+                  }
+                } else {
+                  return Err(SimpleError::new("Invalid bytecode. CallStatic is not function"));
+                }
+              }
+              Instruction::CallDynamic { param_count } => {
+                let mut params: Vec<Value> = Vec::with_capacity(param_count as usize);
+
+                for i in 0..param_count {
                   let param = stack.pop()
                     .ok_or_else(|| SimpleError::new("Invalid bytecode. Not enough args for function"))?;
 
@@ -137,109 +152,87 @@ impl Machine {
 
                 params.reverse();
 
-                if let Instruction::Return = func.body[index + 1] {
-                  src_func_ref = func_ref;
-                  locals = params;
-                  continue 'outer;
-                } else {
-                  let result = self.execute(func_ref, params)?;
+                let maybe_func: Value = stack.pop()
+                  .ok_or_else(|| SimpleError::new("Invalid bytecode. Invalid built in function id"))?;
+
+                if let Value::Function(handle) = maybe_func {
+                  let (func_ref, new_locals) = handle.with(params);
+
+                  if let Instruction::Return = func.body[index + 1] {
+                    src_func_ref = func_ref.clone();
+                    locals = new_locals;
+                    continue 'outer;
+                  }
+
+                  let result = self.execute(func_ref.clone(), new_locals)?;
                   stack.push(result);
+                } else {
+                  return Err(SimpleError::new("Invalid bytecode. CallDynamic is not function"));
                 }
-              } else {
-                return Err(SimpleError::new("Invalid bytecode. CallStatic is not function"))
               }
-            },
-            Instruction::CallDynamic { param_count } => {
-              let mut params: Vec<Value> = Vec::with_capacity(param_count as usize);
+              Instruction::BuildClosure { param_count, func_id } => {
+                let func = module.function_refs.get(func_id as usize)
+                  .ok_or_else(|| SimpleError::new("Invalid bytecode. Invalid function id"))?;
 
-              for i in 0..param_count {
-                let param = stack.pop()
-                  .ok_or_else(|| SimpleError::new("Invalid bytecode. Not enough args for function"))?;
+                let mut params = Vec::with_capacity(param_count as usize);
 
-                params.push(param);
-              }
-
-              params.reverse();
-
-              let maybe_func: Value = stack.pop()
-                .ok_or_else(|| SimpleError::new("Invalid bytecode. Invalid built in function id"))?;
-
-              if let Value::Function(handle) = maybe_func {
-                let (func_ref, new_locals) = handle.with(params);
-
-                if let Instruction::Return = func.body[index + 1] {
-                  src_func_ref = func_ref.clone();
-                  locals = new_locals;
-                  continue 'outer;
+                for _ in 0..param_count {
+                  let param = stack.pop()
+                    .ok_or_else(|| SimpleError::new("Invalid bytecode. Not enough args for closure"))?;
+                  params.push(param);
                 }
 
-                let result = self.app.lookup_function(func_ref)?.execute(&self, new_locals)?;
-                stack.push(result);
-              } else {
-                return Err(SimpleError::new("Invalid bytecode. CallDynamic is not function"))
+                params.reverse();
+
+                let closure = ClosureHandle {
+                  func: func.clone(),
+                  closures: params,
+                };
+
+                stack.push(Value::Function(Rc::new(closure)));
               }
-            },
-            Instruction::BuildClosure { param_count, func_id } => {
-              let func = module.function_refs.get(func_id as usize)
-                .ok_or_else(|| SimpleError::new("Invalid bytecode. Invalid function id"))?;
+              Instruction::BuildRecursiveFunction => {
+                let maybe_func = stack.pop().ok_or_else(|| SimpleError::new("Invalid bytecode. Attempt to BuildRecursiveFunction of empty stack"))?;
 
-              let mut params = Vec::with_capacity(param_count as usize);
+                if let Value::Function(func) = maybe_func {
+                  stack.push(Value::Function(Rc::new(RecursiveHandle { func })));
+                } else {
+                  return Err(SimpleError::new("Invalid bytecode. BuildRecursiveFunction is not function"));
+                }
+              }
+              Instruction::Return => {
+                return stack.pop()
+                  .ok_or_else(|| SimpleError::new("Invalid bytecode. Attempt to return empty stack"));
+              }
+              Instruction::Branch { jump } => {
+                let first = stack.pop()
+                  .ok_or_else(|| SimpleError::new("Invalid bytecode. Attempt to Branch empty stack"))?;
 
-              for _ in 0..param_count {
-                let param = stack.pop()
-                  .ok_or_else(|| SimpleError::new("Invalid bytecode. Not enough args for closure"))?;
-                params.push(param);
+                match first {
+                  Value::True => {}
+                  Value::False => index = Machine::calculate_jump(index, jump),
+                  _ => return Err(SimpleError::new("Invalid bytecode. Attempt to Branch on non boolean"))
+                }
+              }
+              Instruction::Jump { jump } => {
+                index = Machine::calculate_jump(index, jump);
+              }
+              Instruction::Debug => {
+                println!("Debug: \n  Stack: {:#?}\n  Locals: {:#?}\n  Function: ", &stack, &locals);
+                func.debug(module)?;
               }
 
-              params.reverse();
-
-              let closure = ClosureHandle {
-                func: func.clone(),
-                closures: params
-              };
-
-              stack.push(Value::Function(Rc::new(closure)));
-            },
-            Instruction::BuildRecursiveFunction => {
-              let maybe_func = stack.pop().ok_or_else(|| SimpleError::new("Invalid bytecode. Attempt to BuildRecursiveFunction of empty stack"))?;
-
-              if let Value::Function(func) = maybe_func {
-                stack.push(Value::Function(Rc::new(RecursiveHandle { func })));
-              } else {
-                return Err(SimpleError::new("Invalid bytecode. BuildRecursiveFunction is not function"))
-              }
-            },
-            Instruction::Return => {
-              return stack.pop()
-                .ok_or_else(|| SimpleError::new("Invalid bytecode. Attempt to return empty stack"));
-            },
-            Instruction::Branch { jump } => {
-              let first = stack.pop()
-                .ok_or_else(|| SimpleError::new("Invalid bytecode. Attempt to Branch empty stack"))?;
-
-              match first {
-                Value::True => {},
-                Value::False => index = Machine::calculate_jump(index, jump),
-                _ => return Err(SimpleError::new("Invalid bytecode. Attempt to Branch on non boolean"))
-              }
-            },
-            Instruction::Jump { jump } => {
-              index = Machine::calculate_jump(index, jump);
-            }
-            Instruction::Debug => {
-              println!("Debug: \n  Stack: {:#?}\n  Locals: {:#?}\n  Function: ", &stack, &locals);
-              func.debug(module)?;
+              _ => unimplemented!()
             }
 
-            _ => unimplemented!()
+            index += 1;
           }
 
-          index += 1;
+          return Err(SimpleError::new(format!("Overflowed function body")));
         }
-
-        return Err(SimpleError::new(format!("Overflowed function body")))
-      } else {
-        return func.execute(&self, locals);
+        RunFunction::NativeFunction(native) => {
+          return (native.func)(self, locals);
+        }
       }
     }
   }
@@ -251,17 +244,6 @@ impl Machine {
       let rel = (0 - jump) as usize;
       return index - rel;
     }
-  }
-}
-
-impl RunFunction for BitFunction {
-
-  fn execute(&self, machine: &Machine, args: Vec<Value>) -> Result<Value, SimpleError> {
-    machine.execute(self.func_ref.clone(), args)
-  }
-
-  fn unwrap_as_bit_function(&self) -> Option<&BitFunction> {
-    Some(&self)
   }
 }
 
@@ -277,7 +259,6 @@ struct ClosureHandle {
 }
 
 impl FunctionHandle for ClosureHandle {
-
   fn with(&self, mut args: Vec<Value>) -> (&FunctionRef, Vec<Value>) {
     let mut locals = self.closures.clone();
     locals.append(&mut args);
@@ -290,26 +271,16 @@ struct RecursiveHandle {
 }
 
 impl FunctionHandle for RecursiveHandle {
-
   fn with(&self, mut args: Vec<Value>) -> (&FunctionRef, Vec<Value>) {
     let mut locals = Vec::with_capacity(args.len() + 1);
-    locals.push(Value::Function(Rc::new(RecursiveHandle{func: self.func.clone()})));
+    locals.push(Value::Function(Rc::new(RecursiveHandle { func: self.func.clone() })));
     locals.append(&mut args);
     self.func.with(locals)
   }
 }
 
-pub struct NativeFunction<T> {
-  pub func: T,
+pub struct NativeFunction {
+  pub func: Box<Fn(&Machine, Vec<Value>) -> Result<Value, SimpleError>>,
   pub func_ref: FunctionRef,
 }
 
-impl<T: Fn(&Machine, Vec<Value>) -> Result<Value, SimpleError>> RunFunction for NativeFunction<T> {
-  fn execute(&self, machine: &Machine, args: Vec<Value>) -> Result<Value, SimpleError> {
-    (self.func)(machine, args)
-  }
-
-  fn unwrap_as_bit_function(&self) -> Option<&BitFunction> {
-    None
-  }
-}
