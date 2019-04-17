@@ -247,6 +247,14 @@ impl Machine {
   }
 }
 
+impl BitFunction {
+
+  pub fn wrap(self) -> RunFunction {
+    RunFunction::BitFunction(self)
+  }
+
+}
+
 impl FunctionHandle for FunctionRef {
   fn with(&self, args: Vec<Value>) -> (&FunctionRef, Vec<Value>) {
     (&self, args)
@@ -284,3 +292,10 @@ pub struct NativeFunction {
   pub func_ref: FunctionRef,
 }
 
+impl NativeFunction {
+
+  pub fn wrap(self) -> RunFunction {
+    RunFunction::NativeFunction(self)
+  }
+
+}

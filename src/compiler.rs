@@ -93,7 +93,7 @@ pub fn compile(mut module: IrModule) -> Result<BitModule, SimpleError> {
 
     let body = compile_block(&mut context, &mut func_context, &raw_func.body);
 
-    functions.insert(name.clone(), RunFunction::BitFunction(BitFunction {
+    functions.insert(name.clone(), BitFunction {
       func_ref: FunctionRef {
         package: module.package.clone(),
         module: module.name.clone(),
@@ -105,7 +105,7 @@ pub fn compile(mut module: IrModule) -> Result<BitModule, SimpleError> {
       max_locals: func_context.max_locals,
       body,
       source: Vec::new(),
-    }));
+    }.wrap());
   }
 
   let ModuleContext{function_refs, shape_refs, string_constants} = context;
