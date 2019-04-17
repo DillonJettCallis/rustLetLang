@@ -10,6 +10,7 @@ use interpreter::RunFunction;
 use runtime::Value;
 use shapes::BaseShapeKind;
 use shapes::Shape;
+use std::hash::{Hash, Hasher};
 
 pub type LocalId = u16;
 pub type ConstantId = u32;
@@ -82,11 +83,12 @@ impl BitModule {
 
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct FunctionRef {
   pub package: String,
   pub module: String,
   pub name: String,
+
   pub shape: Shape,
 }
 
@@ -102,8 +104,23 @@ impl FunctionRef {
       _ => self.shape.clone()
     }
   }
-
 }
+
+impl Hash for FunctionRef {
+  fn hash<H: Hasher>(&self, state: &mut H) {
+    self.package.hash(state);
+    self.module.hash(state);
+    self.name.hash(state);
+  }
+}
+
+impl PartialEq for FunctionRef {
+  fn eq(&self, other: &FunctionRef) -> bool {
+    self.module == other.module && self.name == other.name && self.package == other.package
+  }
+}
+
+impl Eq for FunctionRef {}
 
 pub struct BitFunction {
   pub func_ref: FunctionRef,

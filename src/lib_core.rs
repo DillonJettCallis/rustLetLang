@@ -39,15 +39,17 @@ pub fn core_runtime() -> BitPackage {
   }
 }
 
-
+#[inline]
 fn float_op<Op: Fn(f64, f64) -> f64 + 'static>(funcs: &mut HashMap<String, RunFunction>, name: &'static str, op_fun: Op) {
   op(funcs, name, op_fun, |result| Value::Float(result), shape_float())
 }
 
+#[inline]
 fn float_compare_op<Op: Fn(f64, f64) -> bool + 'static>(funcs: &mut HashMap<String, RunFunction>, name: &'static str, op_fun: Op) {
   op(funcs, name, op_fun, |result| if result { Value::True } else { Value::False}, shape_boolean());
 }
 
+#[inline]
 fn op<Result, Op: Fn(f64, f64) -> Result + 'static, Map: Fn(Result) -> Value + 'static>(funcs: &mut HashMap<String, RunFunction>, name: &'static str, op: Op, map: Map, result_shape: Shape) {
   let func = Box::new(move |machine: &Machine, args: Vec<Value>| {
     if args.len() == 2 {

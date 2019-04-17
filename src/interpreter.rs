@@ -43,6 +43,11 @@ impl Machine {
     self.execute(self.app.main.clone(), vec![])
   }
 
+  pub fn execute_handle(&self, handle: Rc<FunctionHandle>, locals: Vec<Value>) -> Result<Value, SimpleError> {
+    let (func, params) = handle.with(locals);
+    self.execute(func.clone(), params)
+  }
+
   pub fn execute(&self, mut src_func_ref: FunctionRef, mut locals: Vec<Value>) -> Result<Value, SimpleError> {
     'outer: loop {
       match self.app.lookup_function(&src_func_ref)? {
