@@ -5,6 +5,7 @@ use std::io::{self, ErrorKind, Write};
 use std::rc::Rc;
 
 use simple_error::SimpleError;
+use serde::{Serialize, Deserialize};
 
 use interpreter::RunFunction;
 use runtime::Value;
@@ -83,7 +84,7 @@ impl BitModule {
 
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FunctionRef {
   pub package: String,
   pub module: String,

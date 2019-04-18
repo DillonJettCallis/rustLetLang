@@ -1,15 +1,18 @@
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::io;
-use std::io::Write;
+use std::io::{BufWriter, Error, Write, Read};
 
+use bincode::{serialize_into, deserialize_from};
+use serde::{Deserialize, Serialize};
 use simple_error::SimpleError;
 
-use ast::{AssignmentEx, BinaryOpEx, BlockEx, CallEx, Expression, FunctionDeclarationEx, Location, Module, NumberLiteralEx, Parameter, StringLiteralEx, VariableEx, IfEx};
+use ast::{AssignmentEx, BinaryOpEx, BlockEx, CallEx, Expression, FunctionDeclarationEx, IfEx, Location, Module, NumberLiteralEx, Parameter, StringLiteralEx, VariableEx};
 use bytecode::{FunctionRef, LocalId};
 use ir::ScopeLookup::Local;
-use shapes::{Shape, shape_float, shape_boolean};
+use shapes::{Shape, shape_boolean, shape_float};
 
+#[derive(Serialize, Deserialize)]
 pub struct IrModule {
   pub package: String,
   pub name: String,
@@ -31,6 +34,7 @@ impl IrModule {
   }
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct IrFunction {
   pub func_ref: FunctionRef,
   pub args: Vec<Parameter>,
@@ -59,6 +63,7 @@ impl IrFunction {
   }
 }
 
+#[derive(Serialize, Deserialize)]
 pub enum Ir {
   NoOp,
   // 0 is an error to hopefully crash early on invalid bytecode.
@@ -573,4 +578,15 @@ impl IrScope {
       scope: HashMap::new()
     }
   }
+}
+
+
+pub fn serialize_ir_module<Writer: Write>(writer: &mut Writer, module: &IrModule) -> Result<(), SimpleError> {
+  serialize_into(writer, module)
+    .map_err(|err| SimpleError::from(err))
+}
+
+pub fn deserialize_ir_module<Reader: Read>(reader: &mut Reader) -> Result<IrModule, SimpleError> {
+  deserialize_from(reader)
+    .map_err(|err| SimpleError::from(err))
 }

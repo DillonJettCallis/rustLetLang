@@ -1,6 +1,7 @@
-extern crate bytebuffer;
 extern crate core;
 extern crate simple_error;
+extern crate serde;
+extern crate bincode;
 
 use std::collections::HashMap;
 use std::path::Path;

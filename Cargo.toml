@@ -5,4 +5,5 @@ authors = ["dillon <LordBlackHole@gmail.com>"]
 
 [dependencies]
 simple-error="0.1.11"
-bytebuffer = "0.2.1"
+serde = {version = "1.0.90", features = ["derive"]}
+bincode = "1.1.3"

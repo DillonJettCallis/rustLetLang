@@ -4,7 +4,6 @@ use std::fmt::Error;
 use std::fmt::Formatter;
 use std::rc::Rc;
 
-use bytebuffer::ByteBuffer;
 use simple_error::SimpleError;
 
 use bytecode::*;

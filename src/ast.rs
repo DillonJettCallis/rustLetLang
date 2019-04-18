@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use simple_error::SimpleError;
 
 use shapes::*;
@@ -106,7 +107,7 @@ impl FunctionContext {
   }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Parameter {
   pub id: String,
   pub shape: Shape,
