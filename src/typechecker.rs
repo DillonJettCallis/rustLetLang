@@ -5,7 +5,7 @@ use simple_error::*;
 use ast::*;
 use shapes::*;
 
-pub fn check_module(module: Module) -> Result<Module, SimpleError> {
+pub fn check_module(module: AstModule) -> Result<AstModule, SimpleError> {
   let mut functions = Vec::new();
 
   let mut scope = Scope::new();
@@ -17,13 +17,13 @@ pub fn check_module(module: Module) -> Result<Module, SimpleError> {
 
   for dec in module.functions {
     if let Expression::FunctionDeclaration(content) = dec.ex.check(&mut scope, shape_unknown())? {
-      functions.push(FunctionDeclaration {visibility: dec.visibility, ex: *content});
+      functions.push(AstFunctionDeclaration {visibility: dec.visibility, ex: *content});
     } else {
       return Err(SimpleError::new("FunctionDeclaration didn't return itself!"))
     }
   }
 
-  Ok(Module{ package: module.package, name: module.name, functions })
+  Ok(AstModule { package: module.package, name: module.name, functions })
 }
 
 trait Typed {

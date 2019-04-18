@@ -25,7 +25,7 @@ pub fn lex(src: &Path) -> Result<Vec<Token>, SimpleError> {
   Ok(tokens)
 }
 
-pub fn parse(src: &Path, package: &str, name: &str) -> Result<Module, SimpleError> {
+pub fn parse(src: &Path, package: &str, name: &str) -> Result<AstModule, SimpleError> {
   let tokens = lex(src)?;
   let mut parser = Parser { tokens, index: 0, closure_id: 0 };
   parser.parse_module(package, name)
@@ -44,7 +44,7 @@ struct Parser {
 }
 
 impl Parser {
-  fn parse_module(&mut self, package: &str, name: &str) -> Result<Module, SimpleError> {
+  fn parse_module(&mut self, package: &str, name: &str) -> Result<AstModule, SimpleError> {
     let mut functions = Vec::new();
 
     loop {
@@ -60,7 +60,7 @@ impl Parser {
           Visibility::Private
         },
         "<EOF>" => {
-          return Ok(Module { package: String::from(package), name: String::from(name), functions });
+          return Ok(AstModule { package: String::from(package), name: String::from(name), functions });
         }
         _ => {
           return Err(SimpleError::new(format!("Unexpected token: '{}' {}", token.value, token.location.pretty())));
@@ -68,7 +68,7 @@ impl Parser {
       };
 
       let ex = self.parse_function(false)?;
-      functions.push(FunctionDeclaration{visibility, ex});
+      functions.push(AstFunctionDeclaration {visibility, ex});
     }
   }
 

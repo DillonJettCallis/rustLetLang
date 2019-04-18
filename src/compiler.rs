@@ -14,7 +14,7 @@ use ast::CallEx;
 use ast::Expression;
 use ast::FunctionDeclarationEx;
 use ast::Location;
-use ast::Module;
+use ast::AstModule;
 use ast::NumberLiteralEx;
 use ast::StringLiteralEx;
 use ast::VariableEx;
@@ -49,7 +49,7 @@ pub fn compile_package(name: &str, base_dir: &str) -> Result<BitPackage, SimpleE
   })
 }
 
-fn find_modules(base: &str, package: &str) -> Result<Vec<Module>, SimpleError> {
+fn find_modules(base: &str, package: &str) -> Result<Vec<AstModule>, SimpleError> {
   let mut modules = Vec::new();
   let mut dirs = vec![Path::new(base).to_path_buf()];
 

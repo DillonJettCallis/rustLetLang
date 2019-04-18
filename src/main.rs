@@ -8,7 +8,7 @@ use std::path::Path;
 
 use simple_error::SimpleError;
 
-use ast::Module;
+use ast::AstModule;
 use bytecode::{BitApplication, BitModule, BitPackage};
 use bytecode::BitFunction;
 use bytecode::FunctionRef;

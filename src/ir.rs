@@ -7,7 +7,7 @@ use bincode::{serialize_into, deserialize_from};
 use serde::{Deserialize, Serialize};
 use simple_error::SimpleError;
 
-use ast::{AssignmentEx, BinaryOpEx, BlockEx, CallEx, Expression, FunctionDeclarationEx, IfEx, Location, Module, NumberLiteralEx, Parameter, StringLiteralEx, VariableEx};
+use ast::{AssignmentEx, BinaryOpEx, BlockEx, CallEx, Expression, FunctionDeclarationEx, IfEx, Location, AstModule, NumberLiteralEx, Parameter, StringLiteralEx, VariableEx};
 use bytecode::{FunctionRef, LocalId};
 use ir::ScopeLookup::Local;
 use shapes::{Shape, shape_boolean, shape_float};
@@ -156,7 +156,7 @@ impl Ir {
   }
 }
 
-pub fn compile_ir_module(module: &Module) -> Result<IrModule, SimpleError> {
+pub fn compile_ir_module(module: &AstModule) -> Result<IrModule, SimpleError> {
   let mut context = IrModuleContext::new(module.package.clone(), module.name.clone());
 
   for func in &module.functions {

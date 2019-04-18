@@ -192,13 +192,13 @@ pub struct NumberLiteralEx {
   pub value: f64,
 }
 
-pub struct Module {
+pub struct AstModule {
   pub package: String,
   pub name: String,
-  pub functions: Vec<FunctionDeclaration>,
+  pub functions: Vec<AstFunctionDeclaration>,
 }
 
-pub struct FunctionDeclaration {
+pub struct AstFunctionDeclaration {
   pub visibility: Visibility,
   pub ex: FunctionDeclarationEx,
 }
