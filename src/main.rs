@@ -23,17 +23,18 @@ use shapes::{BaseShapeKind, shape_unknown, shape_float};
 use shapes::Shape;
 use typechecker::check_module;
 
-mod shapes;
 mod ast;
-mod parser;
-mod typechecker;
 mod bytecode;
-mod interpreter;
-mod runtime;
 mod compiler;
-mod optimize;
+mod interpreter;
 mod ir;
 mod lib_core;
+mod optimize;
+mod parser;
+mod runtime;
+mod shapes;
+mod typechecker;
+
 
 fn main() {
   match compile_test() {

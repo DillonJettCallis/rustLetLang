@@ -7,6 +7,7 @@ use simple_error::*;
 use ast::*;
 use shapes::*;
 use std::path::Path;
+use std::collections::HashMap;
 
 pub fn lex(src: &Path) -> Result<Vec<Token>, SimpleError> {
   let mut source = Lexer::new(src)?;
@@ -46,11 +47,16 @@ struct Parser {
 impl Parser {
   fn parse_module(&mut self, package: &str, name: &str) -> Result<AstModule, SimpleError> {
     let mut functions = Vec::new();
+    let mut imports = Vec::new();
 
     loop {
       let token = self.next();
 
       let visibility = match token.value.as_ref() {
+        "import" => {
+          imports.push(self.parse_import()?);
+          continue;
+        },
         "public" => Visibility::Public,
         "internal" => Visibility::Internal,
         "protected" => Visibility::Protected,
@@ -60,7 +66,12 @@ impl Parser {
           Visibility::Private
         },
         "<EOF>" => {
-          return Ok(AstModule { package: String::from(package), name: String::from(name), functions });
+          return Ok(AstModule {
+            package: String::from(package),
+            name: String::from(name),
+            functions,
+            imports
+          });
         }
         _ => {
           return Err(SimpleError::new(format!("Unexpected token: '{}' {}", token.value, token.location.pretty())));
@@ -76,7 +87,7 @@ impl Parser {
     // Assume fun is already parsed
 
     let fun = self.next();
-    assert!(fun.value == "fun");
+    assert!(&fun.value == "fun");
     let loc = fun.location.clone();
 
     let id = self.expect_kind(TokenKind::Id)?.value;
@@ -120,7 +131,7 @@ impl Parser {
 
     let maybe_arrow = self.peek();
 
-    if maybe_arrow.value != "->" && maybe_arrow.value != "=>" {
+    if &maybe_arrow.value != "->" && &maybe_arrow.value != "=>" {
       let arg_id = self.expect_kind(TokenKind::Id)?.value;
       let arg_shape = if self.check_literal(":") {
         self.parse_type()?
@@ -169,11 +180,39 @@ impl Parser {
   fn parse_statement(&mut self) -> Result<Expression, SimpleError> {
     let maybe_key = self.peek();
 
-    match maybe_key.value.as_ref() {
-      "let" => self.parse_assignment(),
-      "fun" => Ok(self.parse_function(true)?.wrap()),
-      _ => self.parse_expression()
-    }
+    let result = match maybe_key.value.as_ref() {
+      "let" => self.parse_assignment()?,
+      "fun" => self.parse_function(true)?.wrap(),
+//      "import" => {
+//        self.skip();
+//        self.parse_import()?.wrap()
+//      },
+      _ => self.parse_expression()?
+    };
+
+    self.check_literal(";");
+    Ok(result)
+  }
+
+  fn parse_import(&mut self) -> Result<ImportEx, SimpleError> {
+    // assume 'import' is already parsed.
+
+    let loc = self.peek().location;
+
+    let package = self.expect_kind(TokenKind::Id)?.value;
+
+    self.expect_literal("::")?;
+
+    let module = self.expect_kind(TokenKind::Id)?.value;
+
+    self.check_literal(";");
+
+    Ok(ImportEx{
+      loc,
+
+      package,
+      module,
+    })
   }
 
   fn parse_expression(&mut self) -> Result<Expression, SimpleError> {
@@ -181,10 +220,8 @@ impl Parser {
   }
 
   fn parse_assignment(&mut self) -> Result<Expression, SimpleError> {
-    // Assume let is already parsed
-
     let maybe_let = self.next();
-    assert!(maybe_let.value == "let");
+    assert_eq!(&maybe_let.value, "let");
 
     let loc = maybe_let.location.clone();
     let id = self.expect_kind(TokenKind::Id)?.value;
@@ -197,12 +234,6 @@ impl Parser {
 
     self.expect_literal("=")?;
     let body = self.parse_expression()?;
-
-    let maybe_colon = self.peek();
-
-    if ";" == maybe_colon.value {
-      self.skip()
-    }
 
     Ok(AssignmentEx { shape, loc, id, body }.wrap())
   }
@@ -432,6 +463,9 @@ impl Parser {
         }
         "}" => {
           opens = opens - 1;
+          if opens == 0 {
+            return false
+          }
         }
         "=>" => {
           return opens == 1;
@@ -446,7 +480,7 @@ impl Parser {
   fn expect_literal(&mut self, value: &str) -> Result<Token, SimpleError> {
     let token = self.next();
 
-    if token.value != value {
+    if &token.value != value {
       return token.expected(value);
     } else {
       Ok(token)
@@ -466,7 +500,7 @@ impl Parser {
   fn check_literal(&mut self, value: &str) -> bool {
     let token = self.peek();
 
-    if token.value != value {
+    if &token.value != value {
       return false;
     } else {
       self.skip();
@@ -537,7 +571,7 @@ impl Lexer {
 
     // Effectively skips whitespace by parsing and never saving it.
     self.lex_word(TokenKind::EOF, is_space, is_space);
-    self.lex_word(TokenKind::Id, |ch| ch.is_alphabetic(), |ch| ch.is_alphanumeric())
+    self.lex_word(TokenKind::Id, |ch| ch.is_alphabetic(), |ch| ch.is_alphanumeric() || ch == '.')
       .or_else(|| self.lex_word(TokenKind::Symbol, |ch| SINGLE_OPS.contains(ch), |_ch| { false }))
       .or_else(|| self.lex_word(TokenKind::Symbol, is_merge_op, is_merge_op))
       .or_else(|| self.lex_word(TokenKind::Number, |ch| ch.is_numeric(), |ch| ch.is_numeric() || ch == '.'))

@@ -4,15 +4,29 @@ use simple_error::*;
 
 use ast::*;
 use shapes::*;
+use ir::IrModule;
 
 pub fn check_module(module: AstModule) -> Result<AstModule, SimpleError> {
+  let mut app = AppShapes::new();
+  let mut imports = module.imports.clone();
   let mut functions = Vec::new();
 
   let mut scope = Scope::new();
   scope.create_function_scope();
 
+  for imp in &imports {
+    let module_name = &imp.module.clone();
+    let module = app.lookup_module(&imp.package, &imp.module)
+      .ok_or_else(|| SimpleError::new("No such module"))?;
+
+    for func in module.list_values() {
+      let shape = module.lookup(&func).expect("Invalid impl");
+      scope.pre_fill_module_function( format!("{}.{}", module_name, func), shape, &imp.loc);
+    }
+  }
+
   for dec in &module.functions {
-    scope.pre_fill_module_function(&dec.ex)?;
+    scope.pre_fill_module_function(dec.ex.id.clone(), dec.ex.shape(), &dec.ex.loc)?;
   }
 
   for dec in module.functions {
@@ -23,7 +37,7 @@ pub fn check_module(module: AstModule) -> Result<AstModule, SimpleError> {
     }
   }
 
-  Ok(AstModule { package: module.package, name: module.name, functions })
+  Ok(AstModule { package: module.package, name: module.name, functions, imports })
 }
 
 trait Typed {
@@ -221,6 +235,7 @@ impl Typed for NumberLiteralEx {
 fn check(scope: &mut Scope, ex: Expression, expected: Shape) -> Result<Expression, SimpleError> {
   match ex {
     Expression::NoOp(_) => Ok(ex),
+    Expression::Import(_) => Ok(ex),
     Expression::FunctionDeclaration(ex) => ex.check(scope, expected),
     Expression::Block(ex) => ex.check(scope, expected),
     Expression::Assignment(ex) => ex.check(scope, expected),
@@ -336,10 +351,10 @@ impl Scope {
     }
   }
 
-  fn pre_fill_module_function(&mut self, func: &FunctionDeclarationEx) -> Result<(), SimpleError> {
-    let shape = fill_shape(func.shape(), &func.loc)?;
+  fn pre_fill_module_function(&mut self, id: String, shape: Shape, loc: &Location) -> Result<(), SimpleError> {
+    let shape = fill_shape(shape, &loc)?;
 
-    self.static_scope.insert(func.id.clone(), shape);
+    self.static_scope.insert(id, shape);
     Ok(())
   }
 
@@ -403,4 +418,162 @@ impl Scope {
     self.closures.pop()
       .expect("closures should never be empty!")
   }
+}
+
+pub struct AppShapes {
+  packages: HashMap<String, Box<PackageShapes>>,
+}
+
+impl AppShapes {
+
+  pub fn new() -> AppShapes {
+    let mut packages = HashMap::new();
+
+    packages.insert(String::from("Core"), core_package());
+
+    AppShapes {
+      packages
+    }
+  }
+
+  fn lookup_module(&self, package: &str, module: &str) -> Option<&Box<ModuleShapes>> {
+    self.packages.get(package).and_then(|pack| pack.lookup_module(module))
+  }
+
+  fn lookup(&self, package: &str, module: &str, name: &str) -> Option<Shape> {
+    self.packages.get(package).and_then(|pack| pack.lookup(module, name))
+  }
+
+}
+
+trait PackageShapes {
+
+  fn lookup_module(&self, module: &str) -> Option<&Box<ModuleShapes>>;
+
+  fn lookup(&self, module: &str, name: &str) -> Option<Shape>;
+
+}
+
+struct PackageShapesBundle {
+  modules: HashMap<String, Box<ModuleShapes>>,
+}
+
+impl PackageShapes for PackageShapesBundle {
+  fn lookup_module(&self, module: &str) -> Option<&Box<ModuleShapes>> {
+    self.modules.get(module)
+  }
+
+  fn lookup(&self, module: &str, name: &str) -> Option<Shape> {
+    self.modules.get(module).and_then(|module| module.lookup(name))
+  }
+}
+
+trait ModuleShapes {
+
+  fn lookup(&self, name: &str) -> Option<Shape>;
+
+  fn list_values(&self) -> Vec<String>;
+
+}
+
+struct CoreModuleShapes {
+  functions: HashMap<String, Shape>
+}
+
+impl ModuleShapes for IrModule {
+  fn lookup(&self, name: &str) -> Option<Shape> {
+    self.functions.get(name).map(|func| func.shape.clone())
+  }
+
+  fn list_values(&self) -> Vec<String> {
+    self.functions.keys().into_iter().map(|i| i.clone()).collect()
+  }
+}
+
+impl ModuleShapes for CoreModuleShapes {
+  fn lookup(&self, name: &str) -> Option<Shape> {
+    self.functions.get(name).map(|shape| shape.clone())
+  }
+  fn list_values(&self) -> Vec<String> {
+    self.functions.keys().into_iter().map(|i| i.clone()).collect()
+  }
+}
+
+fn core_package() -> Box<PackageShapes> {
+  let mut modules = HashMap::new();
+
+  modules.insert(String::from("Core"), core_module());
+  modules.insert(String::from("List"), list_module());
+
+  Box::new(PackageShapesBundle {
+    modules
+  })
+}
+
+fn list_module() -> Box<ModuleShapes> {
+  let mut functions = HashMap::new();
+
+  let float_list = shape_list(shape_float());
+
+  functions.insert(String::from("new"), Shape::SimpleFunctionShape {
+    args: vec![],
+    result: Box::new(float_list.clone())
+  });
+
+  functions.insert(String::from("append"), Shape::SimpleFunctionShape {
+    args: vec![float_list.clone(), shape_float()],
+    result: Box::new(float_list.clone())
+  });
+
+  let mapper_shape = Shape::SimpleFunctionShape {
+    args: vec![shape_float()],
+    result: Box::new(shape_float())
+  };
+
+  functions.insert(String::from("map"), Shape::SimpleFunctionShape {
+    args: vec![float_list.clone(), mapper_shape],
+    result: Box::new(float_list.clone())
+  });
+
+  let reducer_shape = Shape::SimpleFunctionShape {
+    args: vec![shape_float(), shape_float()],
+    result: Box::new(shape_float())
+  };
+
+  functions.insert(String::from("fold"), Shape::SimpleFunctionShape {
+    args: vec![float_list.clone(), shape_float(), reducer_shape],
+    result: Box::new(shape_float())
+  });
+
+  Box::new(CoreModuleShapes {
+    functions
+  })
+}
+
+fn core_module() -> Box<ModuleShapes> {
+  let mut functions = HashMap::new();
+  let float_math = Shape::SimpleFunctionShape {
+    args: vec![shape_float(), shape_float()],
+    result: Box::new(shape_float())
+  };
+  let float_compare = Shape::SimpleFunctionShape {
+    args: vec![shape_float(), shape_float()],
+    result: Box::new(shape_boolean())
+  };
+
+  functions.insert(String::from("+"), float_math.clone());
+  functions.insert(String::from("-"), float_math.clone());
+  functions.insert(String::from("*"), float_math.clone());
+  functions.insert(String::from("/"), float_math.clone());
+
+  functions.insert(String::from("=="), float_compare.clone());
+  functions.insert(String::from("!="), float_compare.clone());
+  functions.insert(String::from(">"), float_compare.clone());
+  functions.insert(String::from(">="), float_compare.clone());
+  functions.insert(String::from("<"), float_compare.clone());
+  functions.insert(String::from("<="), float_compare.clone());
+
+  Box::new(CoreModuleShapes {
+    functions
+  })
 }

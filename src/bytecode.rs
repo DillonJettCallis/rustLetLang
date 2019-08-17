@@ -82,6 +82,25 @@ impl BitModule {
       .clone())
   }
 
+  pub fn debug(&self) -> Result<(), SimpleError> {
+    for raw in self.functions.values() {
+      match raw {
+        RunFunction::BitFunction(func) => func.debug(self)?,
+        RunFunction::NativeFunction(func) => {
+          let mut writer = io::stderr();
+
+          writer.write_all(format!("{}: {}\n", func.func_ref.pretty(), func.func_ref.shape.pretty()).as_bytes())
+            .map_err(|err| SimpleError::from(err))?;
+
+          writer.write_all(b"  <native code>\n")
+            .map_err(|err| SimpleError::from(err))?
+        }
+      }
+    }
+
+    Ok(())
+  }
+
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

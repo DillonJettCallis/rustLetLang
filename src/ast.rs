@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use simple_error::SimpleError;
 
 use shapes::*;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub struct Location {
@@ -26,6 +27,7 @@ impl Location {
 
 pub enum Expression {
   NoOp(Location),
+  Import(Box<ImportEx>),
   FunctionDeclaration(Box<FunctionDeclarationEx>),
   Assignment(Box<AssignmentEx>),
   Variable(Box<VariableEx>),
@@ -42,6 +44,7 @@ impl Expression {
   pub fn loc(&self) -> &Location {
     match self {
       Expression::NoOp(loc) => loc,
+      Expression::Import(ex) => &ex.loc,
       Expression::FunctionDeclaration(ex) => &ex.loc,
       Expression::Assignment(ex) => &ex.loc,
       Expression::Variable(ex) => &ex.loc,
@@ -58,6 +61,7 @@ impl Expression {
   pub fn shape(&self) -> Shape {
     match self {
       Expression::NoOp(_) => shape_unit(),
+      Expression::Import(ex) => shape_unit(),
       Expression::FunctionDeclaration(ex) => ex.shape(),
       Expression::Assignment(ex) => ex.shape.clone(),
       Expression::Variable(ex) => ex.shape.clone(),
@@ -196,6 +200,15 @@ pub struct AstModule {
   pub package: String,
   pub name: String,
   pub functions: Vec<AstFunctionDeclaration>,
+  pub imports: Vec<ImportEx>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ImportEx {
+  pub loc: Location,
+
+  pub package: String,
+  pub module: String,
 }
 
 pub struct AstFunctionDeclaration {
@@ -265,5 +278,11 @@ impl StringLiteralEx {
 impl NumberLiteralEx {
   pub fn wrap(self) -> Expression {
     Expression::NumberLiteral(Box::new(self))
+  }
+}
+
+impl ImportEx {
+  pub fn wrap(self) -> Expression {
+    Expression::Import(Box::new(self))
   }
 }

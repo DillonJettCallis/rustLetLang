@@ -1,16 +1,16 @@
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::io;
-use std::io::{BufWriter, Error, Write, Read};
+use std::io::{BufWriter, Error, Read, Write};
 
-use bincode::{serialize_into, deserialize_from};
+use bincode::{deserialize_from, serialize_into};
 use serde::{Deserialize, Serialize};
 use simple_error::SimpleError;
 
-use ast::{AssignmentEx, BinaryOpEx, BlockEx, CallEx, Expression, FunctionDeclarationEx, IfEx, Location, AstModule, NumberLiteralEx, Parameter, StringLiteralEx, VariableEx};
+use ast::{AssignmentEx, AstModule, BinaryOpEx, BlockEx, CallEx, Expression, FunctionDeclarationEx, IfEx, Location, NumberLiteralEx, Parameter, StringLiteralEx, VariableEx};
 use bytecode::{FunctionRef, LocalId};
 use ir::ScopeLookup::Local;
-use shapes::{Shape, shape_boolean, shape_float};
+use shapes::{Shape, shape_boolean, shape_float, shape_list};
 
 #[derive(Serialize, Deserialize)]
 pub struct IrModule {
@@ -46,7 +46,7 @@ impl IrFunction {
   pub fn debug(&self) {
     let mut writer = io::stderr();
 
-    self.pretty_print(&mut writer);
+    self.pretty_print(&mut writer).unwrap();
   }
 
   pub fn pretty_print<Writer: Write>(&self, writer: &mut Writer) -> Result<(), SimpleError> {
@@ -158,6 +158,22 @@ impl Ir {
 
 pub fn compile_ir_module(module: &AstModule) -> Result<IrModule, SimpleError> {
   let mut context = IrModuleContext::new(module.package.clone(), module.name.clone());
+
+  let core_lib = CoreLibContext::new();
+
+  for imp in &module.imports {
+    if &imp.package == "Core" {
+      let lib = core_lib.scope.get(&imp.module)
+        .ok_or_else(|| SimpleError::new(format!("Can't find function {} in core lib.", &imp.module)))?;
+
+      for lookup in lib {
+        match lookup {
+          ScopeLookup::Static(fun) => context.declared_functions.insert(format!("{}.{}", &imp.module, fun.name), lookup.clone()),
+          ScopeLookup::Local => return Err(SimpleError::new(format!("Can't find function {} in core lib.", &imp.module)))
+        };
+      }
+    }
+  }
 
   for func in &module.functions {
     let func_ref = FunctionRef {
@@ -425,6 +441,69 @@ impl IrCoreContext {
       scope
     }
   }
+}
+
+struct CoreLibContext {
+  scope: HashMap<String, Vec<ScopeLookup>>,
+}
+
+impl CoreLibContext {
+
+  fn new() -> CoreLibContext {
+    let mut me = CoreLibContext {
+      scope: HashMap::new()
+    };
+    me.list();
+    me
+  }
+
+  fn list(&mut self) {
+    let mut scope = Vec::new();
+
+    let float_list = shape_list(shape_float());
+
+    fn insert(scope: &mut Vec<ScopeLookup>, name: &'static str, shape: Shape) {
+      scope.push(ScopeLookup::Static(FunctionRef {
+        package: String::from("Core"),
+        module: String::from("List"),
+        name: String::from(name),
+        shape,
+      }));
+    };
+
+    insert(&mut scope, "new", Shape::SimpleFunctionShape {
+      args: vec![],
+      result: Box::new(float_list.clone())
+    });
+
+    insert(&mut scope, "append", Shape::SimpleFunctionShape {
+      args: vec![float_list.clone(), shape_float()],
+      result: Box::new(float_list.clone())
+    });
+
+    let mapper_shape = Shape::SimpleFunctionShape {
+      args: vec![shape_float()],
+      result: Box::new(shape_float())
+    };
+
+    insert(&mut scope, "map", Shape::SimpleFunctionShape {
+      args: vec![float_list.clone(), mapper_shape],
+      result: Box::new(float_list.clone())
+    });
+
+    let reducer_shape = Shape::SimpleFunctionShape {
+      args: vec![shape_float(), shape_float()],
+      result: Box::new(shape_float())
+    };
+
+    insert(&mut scope, "fold", Shape::SimpleFunctionShape {
+      args: vec![float_list.clone(), shape_float(), reducer_shape],
+      result: Box::new(float_list.clone())
+    });
+
+    self.scope.insert("List".to_string(), scope);
+  }
+
 }
 
 struct IrModuleContext {

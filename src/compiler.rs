@@ -41,6 +41,7 @@ pub fn compile_package(name: &str, base_dir: &str) -> Result<BitPackage, SimpleE
     let checked = typechecker::check_module(parsed)?;
     let compiled = compile_ir_module(&checked)?;
     let bytecode = compile(compiled)?;
+    bytecode.debug();
     modules.insert(checked.name.clone(), bytecode);
   }
 
@@ -87,7 +88,7 @@ pub fn compile(mut module: IrModule) -> Result<BitModule, SimpleError> {
 
   for (name, mut raw_func) in module.functions {
     optimizer.optimize(&mut raw_func);
-    raw_func.debug();
+//    raw_func.debug();
 
     let mut func_context = FuncContext::new(&raw_func.args);
 

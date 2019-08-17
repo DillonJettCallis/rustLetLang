@@ -1,9 +1,12 @@
 
+import Core::List;
+
 public fun main(): Float = {
     let outside = 2;
 
     let x = higher({a, b -> Float => a + b * outside});
-    pow(2, 8) + x
+    let y = pow(2, 8) + x
+    listTest()
 }
 
 fun higher(op: {Float, Float -> Float}): Float = {
@@ -20,4 +23,11 @@ fun pow(base: Float, power: Float): Float = {
   }
 
   recurse(base, power)
+}
+
+fun listTest(): Float = {
+  let first = List.new()
+  let second = List.append(List.append(List.append(List.append(List.append(first, 1), 2), 3), 4), 5)
+  let third = List.map(second, { a => a * 2 })
+  List.fold(third, 0, {l, r => l + r})
 }
