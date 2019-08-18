@@ -7,7 +7,7 @@ use ast::Expression::BinaryOp;
 use bytecode::{BitModule, BitPackage, FunctionRef};
 use interpreter::{Machine, NativeFunction, RunFunction};
 use runtime::{Value, ListValue};
-use shapes::{Shape, shape_list};
+use shapes::{Shape, BaseShapeKind, shape_list};
 use std::borrow::Borrow;
 
 pub fn core_runtime() -> BitPackage {

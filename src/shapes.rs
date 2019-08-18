@@ -106,5 +106,9 @@ pub struct GenericShape {
 
 #[macro_export]
 macro_rules! shape {
-    ($name:ident) => (Shape::NamedShape { name: stringify!($name).to_string() }.fill_shape_native());
+    (Float) => (Shape::BaseShape { kind: BaseShapeKind::Float });
+    (Boolean) => (Shape::BaseShape { kind: BaseShapeKind::Boolean });
+    (Unit) => (Shape::BaseShape { kind: BaseShapeKind::Unit });
+    (String) => (Shape::BaseShape { kind: BaseShapeKind::String });
+
 }
