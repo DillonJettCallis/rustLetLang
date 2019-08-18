@@ -57,7 +57,7 @@ fn list_module() -> BitModule {
 
   exact(&mut functions, "List", "new", 0, |_, _| Ok(Value::List(Rc::new(ListValue::new(shape!(Float))))), Shape::SimpleFunctionShape {
     args: vec![],
-    result: Box::new(float_list.clone()),
+    result: Box::new(shape!(List [ Float ] )),
   });
 
   exact(&mut functions, "List", "append", 2, |_, args| {

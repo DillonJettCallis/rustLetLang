@@ -106,9 +106,10 @@ pub struct GenericShape {
 
 #[macro_export]
 macro_rules! shape {
-    (Float) => (Shape::BaseShape { kind: BaseShapeKind::Float });
-    (Boolean) => (Shape::BaseShape { kind: BaseShapeKind::Boolean });
-    (Unit) => (Shape::BaseShape { kind: BaseShapeKind::Unit });
-    (String) => (Shape::BaseShape { kind: BaseShapeKind::String });
-
+  (Boolean) => (Shape::BaseShape { kind: BaseShapeKind::Boolean });
+  (Float) => (Shape::BaseShape { kind: BaseShapeKind::Float });
+  (String) => (Shape::BaseShape { kind: BaseShapeKind::String });
+  (Unit) => (Shape::BaseShape { kind: BaseShapeKind::Unit });
+  (List) => (Shape::BaseShape { kind: BaseShapeKind::List });
+  ($base:ident [ $($inner:tt)+ ]) => (Shape::GenericShape {base: Box::new( shape!( $base )  ), args: vec![ shape!($($inner)+) ]});
 }
