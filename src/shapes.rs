@@ -1,4 +1,6 @@
 use serde::{Serialize, Deserialize};
+use ast::Location;
+use typechecker::fill_shape;
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub enum Shape {
@@ -54,6 +56,10 @@ impl Shape {
       Shape::UnknownShape => String::from("Unknown"),
     }
   }
+
+  pub fn fill_shape_native(self) -> Shape {
+    fill_shape(self, &Location { src: String::from("<native>"), x: 0, y: 0, }).unwrap()
+  }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
@@ -96,4 +102,9 @@ pub fn shape_unknown() -> Shape {
 pub struct GenericShape {
   base: Shape,
   args: Vec<Shape>,
+}
+
+#[macro_export]
+macro_rules! shape {
+    ($name:ident) => (Shape::NamedShape { name: stringify!($name).to_string() }.fill_shape_native());
 }

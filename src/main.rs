@@ -23,6 +23,8 @@ use shapes::{BaseShapeKind, shape_unknown, shape_float};
 use shapes::Shape;
 use typechecker::check_module;
 
+#[macro_use]
+mod shapes;
 mod ast;
 mod bytecode;
 mod compiler;
@@ -32,7 +34,6 @@ mod lib_core;
 mod optimize;
 mod parser;
 mod runtime;
-mod shapes;
 mod typechecker;
 
 

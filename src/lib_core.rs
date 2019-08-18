@@ -7,7 +7,7 @@ use ast::Expression::BinaryOp;
 use bytecode::{BitModule, BitPackage, FunctionRef};
 use interpreter::{Machine, NativeFunction, RunFunction};
 use runtime::{Value, ListValue};
-use shapes::{Shape, shape_boolean, shape_float, shape_list};
+use shapes::{Shape, shape_list};
 use std::borrow::Borrow;
 
 pub fn core_runtime() -> BitPackage {
@@ -45,17 +45,17 @@ fn core_module() -> BitModule {
 
 fn list_module() -> BitModule {
   let mut functions = HashMap::new();
-  let float_list = shape_list(shape_float());
+  let float_list = shape_list(shape!(Float));
   let mapper_shape = Shape::SimpleFunctionShape {
-    args: vec![shape_float()],
-    result: Box::new(shape_float())
+    args: vec![shape!(Float)],
+    result: Box::new(shape!(Float))
   };
   let reducer_shape = Shape::SimpleFunctionShape {
-    args: vec![shape_float(), shape_float()],
-    result: Box::new(shape_float())
+    args: vec![shape!(Float), shape!(Float)],
+    result: Box::new(shape!(Float))
   };
 
-  exact(&mut functions, "List", "new", 0, |_, _| Ok(Value::List(Rc::new(ListValue::new(shape_float())))), Shape::SimpleFunctionShape {
+  exact(&mut functions, "List", "new", 0, |_, _| Ok(Value::List(Rc::new(ListValue::new(shape!(Float))))), Shape::SimpleFunctionShape {
     args: vec![],
     result: Box::new(float_list.clone()),
   });
@@ -73,7 +73,7 @@ fn list_module() -> BitModule {
       Err(SimpleError::new("List.append first argument must be a list"))
     }
   }, Shape::SimpleFunctionShape {
-    args: vec![float_list.clone(), shape_float()],
+    args: vec![float_list.clone(), shape!(Float)],
     result: Box::new(float_list.clone()),
   });
 
@@ -120,7 +120,7 @@ fn list_module() -> BitModule {
       Err(SimpleError::new("List.fold first argument must be a list"))
     }
   }, Shape::SimpleFunctionShape {
-    args: vec![float_list.clone(), shape_float(), reducer_shape],
+    args: vec![float_list.clone(), shape!(Float), reducer_shape],
     result: Box::new(float_list.clone())
   });
 
@@ -134,12 +134,12 @@ fn list_module() -> BitModule {
 
 #[inline]
 fn float_op<Op: Fn(f64, f64) -> f64 + 'static>(funcs: &mut HashMap<String, RunFunction>, name: &'static str, op_fun: Op) {
-  op(funcs, name, op_fun, |result| Value::Float(result), shape_float())
+  op(funcs, name, op_fun, |result| Value::Float(result), shape!(Float))
 }
 
 #[inline]
 fn float_compare_op<Op: Fn(f64, f64) -> bool + 'static>(funcs: &mut HashMap<String, RunFunction>, name: &'static str, op_fun: Op) {
-  op(funcs, name, op_fun, |result| if result { Value::True } else { Value::False}, shape_boolean());
+  op(funcs, name, op_fun, |result| if result { Value::True } else { Value::False}, shape!(Boolean));
 }
 
 #[inline]
@@ -165,7 +165,7 @@ fn op<Result, Op: Fn(f64, f64) -> Result + 'static, Map: Fn(Result) -> Value + '
       name: String::from(name),
 
       shape: Shape::SimpleFunctionShape {
-        args: vec![shape_float(), shape_float()],
+        args: vec![shape!(Float), shape!(Float)],
         result: Box::new(result_shape),
       },
     },

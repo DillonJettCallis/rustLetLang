@@ -249,7 +249,7 @@ fn check(scope: &mut Scope, ex: Expression, expected: Shape) -> Result<Expressio
   }
 }
 
-fn fill_shape(shape: Shape, loc: &Location) -> Result<Shape, SimpleError> {
+pub fn fill_shape(shape: Shape, loc: &Location) -> Result<Shape, SimpleError> {
   match shape {
     Shape::GenericShapeConstructor{base, args} => {
       Ok(Shape::GenericShapeConstructor {
@@ -285,6 +285,7 @@ fn fill_shape(shape: Shape, loc: &Location) -> Result<Shape, SimpleError> {
       match name.as_ref() {
         "String" => Ok(shape_string()),
         "Float" => Ok(shape_float()),
+        "Boolean" => Ok(shape_boolean()),
         "Unit" => Ok(shape_unit()),
         _ => Err(SimpleError::new(format!("Could not find type: {}, {}", name, loc.pretty())))
       }
