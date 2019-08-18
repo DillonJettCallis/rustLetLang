@@ -111,5 +111,5 @@ macro_rules! shape {
   (String) => (Shape::BaseShape { kind: BaseShapeKind::String });
   (Unit) => (Shape::BaseShape { kind: BaseShapeKind::Unit });
   (List) => (Shape::BaseShape { kind: BaseShapeKind::List });
-  ($base:ident [ $($inner:tt)+ ]) => (Shape::GenericShape {base: Box::new( shape!( $base )  ), args: vec![ shape!($($inner)+) ]});
+  ($base:ident [ $($inner:tt),+ ]) => (Shape::GenericShape {base: Box::new( shape!( $base )  ), args: vec![ $(shape!($inner)),+ ]});
 }
