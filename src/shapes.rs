@@ -106,10 +106,26 @@ pub struct GenericShape {
 
 #[macro_export]
 macro_rules! shape {
+  (@list $base:ident [ $($inner:tt)+ ], $($tail:tt)+ ) => ({ // List [ <anything> ], <anything>
+      let mut rest: Vec<Shape> = shape!(@list $($tail)*);
+      rest.push(shape!($base [ $($inner)+ ]));
+      rest
+    });
+  (@list $base:ident [ $($inner:tt)+ ]) => (vec![shape!($base [ $($inner)+ ] )]); // List [ <anything> ]
+  (@list $base:ident, $($tail:tt)+ ) => ({ // Float, <anything>
+      let mut rest: Vec<Shape> = shape!(@list $($tail)*);
+      rest.push(shape!($base));
+      rest
+    });
+  (@list $base:ident) => (vec![shape!($base)]); // Float
+  ($base:ident [ $($inner:tt)+ ] ) => ({
+      let mut args = shape!(@list $($inner)+);
+      args.reverse();
+      Shape::GenericShape {base: Box::new( shape!( $base )  ), args}
+    });
   (Boolean) => (Shape::BaseShape { kind: BaseShapeKind::Boolean });
   (Float) => (Shape::BaseShape { kind: BaseShapeKind::Float });
   (String) => (Shape::BaseShape { kind: BaseShapeKind::String });
   (Unit) => (Shape::BaseShape { kind: BaseShapeKind::Unit });
   (List) => (Shape::BaseShape { kind: BaseShapeKind::List });
-  ($base:ident [ $($inner:tt),+ ]) => (Shape::GenericShape {base: Box::new( shape!( $base )  ), args: vec![ $(shape!($inner)),+ ]});
 }

@@ -45,7 +45,7 @@ fn core_module() -> BitModule {
 
 fn list_module() -> BitModule {
   let mut functions = HashMap::new();
-  let float_list = shape_list(shape!(Float));
+  let float_list = shape!(List[Float]);
   let mapper_shape = Shape::SimpleFunctionShape {
     args: vec![shape!(Float)],
     result: Box::new(shape!(Float))
@@ -57,7 +57,7 @@ fn list_module() -> BitModule {
 
   exact(&mut functions, "List", "new", 0, |_, _| Ok(Value::List(Rc::new(ListValue::new(shape!(Float))))), Shape::SimpleFunctionShape {
     args: vec![],
-    result: Box::new(shape!(List [ Float ] )),
+    result: Box::new(shape!(List[Float])),
   });
 
   exact(&mut functions, "List", "append", 2, |_, args| {
